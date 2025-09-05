@@ -130,13 +130,19 @@ const uiStart = document.getElementById('ui-start');
 // Bloquea scroll de página por gestos
 document.addEventListener('touchmove', (e)=>{ e.preventDefault(); }, { passive: false });
 
-uiStart.addEventListener('click', ()=>{
+uiStart.addEventListener('click', async ()=>{
   if (uiState.hearts <= 0){
     alert('No tienes ❤️. Espera el claim o compra en la tienda.');
     return;
   }
   uiState.hearts -= 1; renderTop(); saveProgress();
   home.classList.add('hidden'); game.classList.remove('hidden');
+  // Permiso para orientación en iOS
+if (typeof DeviceOrientationEvent !== 'undefined'
+    && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  try { await DeviceOrientationEvent.requestPermission(); } catch (e) { console.warn(e); }
+}
+
   if (typeof window.startGame === 'function') { window.startGame(); }
   else { console.error('startGame no está disponible.'); }
 });

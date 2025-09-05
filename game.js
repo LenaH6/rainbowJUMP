@@ -132,20 +132,20 @@ function updateBullets() {
 function update() {
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
-  // Horizontal follow con slack en los bordes
+// Horizontal follow (tilt) + wrap simple
 {
   const cw = canvas.clientWidth;
-  const desiredCenter = desiredCenterXWithSlack(mouseX); // puede ser <0 o >cw
-  const currentCenter = PLAYER.x + PLAYER.w/2;
-  PLAYER.x += (desiredCenter - currentCenter) * 0.14;
+  const currentCenter = PLAYER.x + PLAYER.w / 2;
+  PLAYER.x += (mouseX - currentCenter) * 0.14;
 
-  // Wrap duro cuando cruza completamente
+  // Wrap cuando cruza
   if (PLAYER.x + PLAYER.w < 0) {
-    PLAYER.x = cw - 1; // entrar por la derecha
+    PLAYER.x = cw - 1;
   } else if (PLAYER.x > cw) {
-    PLAYER.x = -PLAYER.w + 1; // entrar por la izquierda
+    PLAYER.x = -PLAYER.w + 1;
   }
 }
+
 
   // Vertical
   if (boosting) { PLAYER.dy = -8.0; PLAYER.y += PLAYER.dy; }
@@ -243,52 +243,42 @@ function endGame() {
   document.getElementById('home-screen').classList.remove('hidden');
 }
 
-// ===== INPUT + HARD WRAP =====
-let mouseX = 200;
-
-// Este helper transforma el mouse en un "objetivo virtual" con slack en bordes
-function desiredCenterXWithSlack(rawX) {
-  const cw = canvas.clientWidth;
-  const slack = 60; // margen virtual para “salirse”
-  if (rawX >= cw - 1) return cw + slack;   // empuja a la derecha para que envuelva
-  if (rawX <= 1)      return -slack;       // empuja a la izquierda para que envuelva
-  return rawX;
-}
-
-// Mouse
+// ===== INPUT (Tilt para mover, Touch/Click para disparar) =====
+let mouseX = canvas.clientWidth / 2;
+// ===== Fallback temporal con el mouse (solo PC) =====
 canvas.addEventListener("mousemove", (e) => {
   const rect = canvas.getBoundingClientRect();
   mouseX = e.clientX - rect.left;
 });
 
-// Touch
-canvas.addEventListener("touchstart", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const t = e.touches[0];
-  mouseX = t.clientX - rect.left;
-  e.preventDefault();
-}, { passive: false });
+// Movimiento con inclinación del celular
+if (window.DeviceOrientationEvent) {
+  window.addEventListener("deviceorientation", (e) => {
+    const cw = canvas.clientWidth;
+    const center = cw / 2;
 
-canvas.addEventListener("touchmove", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const t = e.touches[0];
-  mouseX = t.clientX - rect.left;
-  e.preventDefault();
-}, { passive: false });
+    // e.gamma: inclinación izquierda (-) / derecha (+), rango aprox. -45 a 45
+    const sensitivity = 5; // sube o baja este valor según qué tan rápido quieras
+    mouseX = center + (e.gamma || 0) * sensitivity;
 
+    // Limita dentro de pantalla
+    mouseX = Math.max(0, Math.min(cw, mouseX));
+  });
+}
+
+// Disparo con tap o click
 canvas.addEventListener("touchend", (e) => {
   if (!isGameRunning) return;
   bullets.push({ x: PLAYER.x + PLAYER.w/2, y: PLAYER.y, dx: 0, dy: -8 });
   e.preventDefault();
 }, { passive: false });
 
-// Click para disparar
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
   const rect = canvas.getBoundingClientRect();
   const clickX = e.clientX - rect.left;
   let bullet = { x: PLAYER.x + PLAYER.w/2, y: PLAYER.y, dx: 0, dy: -8 };
-  if (clickX < canvas.clientWidth / 3) { bullet.dx = -5; bullet.dy = -8; }
-  else if (clickX > (canvas.clientWidth * 2) / 3) { bullet.dx = 5; bullet.dy = -8; }
+  if (clickX < canvas.clientWidth / 3) { bullet.dx = -5; }
+  else if (clickX > (canvas.clientWidth * 2) / 3) { bullet.dx = 5; }
   bullets.push(bullet);
 });
