@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#111" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>RainbowJump</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- Loading Screen -->
+  <div id="loading-screen" class="screen">
+    <div>
+      <div class="logo">🌈 RainbowJump</div>
+      <div class="loading-dot"></div>
+    </div>
+  </div>
+
+  <!-- Home Screen -->
+  <div id="home-screen" class="screen hidden">
+    <div class="top-bar">
+      <button id="btnProfile" class="icon-btn">👤</button>
+      <div class="center-group">
+        <div class="counter">
+          <div class="label">Coins</div>
+          <div id="ui-coins" class="value">0</div>
+        </div>
+        <div class="counter">
+          <div class="label">Tokens</div>
+          <div id="ui-token" class="value">0</div>
+        </div>
+        <div class="counter">
+          <div class="label">❤️</div>
+          <div id="ui-hearts" class="value">5</div>
+        </div>
+      </div>
+      <div class="level-box">
+        <div class="level-row"><span id="ui-level">Lv. 1</span></div>
+        <div class="level-bar"><div id="ui-level-progress" class="level-fill" style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <div class="claim-life">
+      <button id="btn-claim-life" class="primary">Claim Life ❤️</button>
+      <div id="life-timer" class="timer small">Next life in 00:00:30</div>
+    </div>
+
+    <div class="hero-preview">
+      <div class="jumper-preview big"></div>
+      <div class="platform-demo"></div>
+    </div>
+
+    <div class="start-area">
+      <div class="slots">
+        <div class="slot">⚡</div>
+        <div class="slot">🛡️</div>
+        <div class="slot locked">🔒</div>
+      </div>
+      <button id="ui-start" class="start-btn">▶️ START</button>
+    </div>
+
+    <div class="bottom-nav">
+      <button class="nav-btn active" data-view="home">🎮<span>Game</span></button>
+      <button class="nav-btn" data-view="shop">🛒<span>Shop</span></button>
+      <button class="nav-btn" data-view="wallet">💰<span>Wallet</span></button>
+      <button class="nav-btn" data-view="prizes">🏆<span>Prizes</span></button>
+    </div>
+
+    <!-- Profile Popover -->
+    <div id="profile-popover" class="popover hidden">
+      <div class="popover-tabs">
+        <div class="tab active" data-tab="profile-pane">Profile</div>
+        <div class="tab" data-tab="settings-pane">Settings</div>
+      </div>
+      <div class="popover-content">
+        <div id="profile-pane" class="tab-pane active">
+          <div class="avatar-preview"><div class="jumper-preview"></div></div>
+          <div class="profile-stats">
+            <div class="row"><span>High Score:</span><span id="ui-highscore">0</span></div>
+            <div class="row"><span>Games:</span><span id="ui-games">0</span></div>
+            <div class="row"><span>Average:</span><span id="ui-avgscore">0</span></div>
+          </div>
+        </div>
+        <div id="settings-pane" class="tab-pane hidden">
+          <div class="settings-list">
+            <div class="list-btn">
+              <div class="row">
+                <span>Sound</span>
+                <label class="switch"><input type="checkbox" checked/><span class="slider"></span></label>
+              </div>
+            </div>
+            <div class="list-btn">
+              <div class="row links"><a href="#">Support</a><a href="#">FAQ</a></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sub Views -->
+    <div id="shop-view" class="subview hidden">
+      <h3>🛒 Shop</h3><p>Compra power-ups y mejoras para tu personaje.</p>
+    </div>
+    <div id="wallet-view" class="subview hidden">
+      <h3>💰 Wallet</h3><p>Administra tus monedas y tokens.</p>
+    </div>
+    <div id="prizes-view" class="subview hidden">
+      <h3>🏆 Prizes</h3><p>Reclama tus recompensas diarias.</p>
+    </div>
+  </div>
+
+  <!-- Game Container -->
+  <div id="game-container" class="screen hidden">
+    <div class="game-ui"><div id="score">Score: 0</div></div>
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+  <script src="./miniapp.js"></script>
+  <script src="./ui.js"></script>
+  <script src="./game.js"></script>
+</body>
+</html>

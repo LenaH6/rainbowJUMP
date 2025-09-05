@@ -1,0 +1,149 @@
+
+/* ===== Layout base ===== */
+html, body { height: 100%; overflow: hidden; }
+body {
+  margin: 0;
+  font-family: system-ui, Arial, sans-serif;
+  background: radial-gradient(1200px 600px at 50% 20%, #ffe9f7 0%, #e7f0ff 40%, #ffffff 100%);
+  color: #111;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+/* App size: 100dvh in mobile, width cap on desktop */
+:root { --app-w: min(400px, 100vw); --app-h: 100dvh; }
+
+.screen, #game-container {
+  width: var(--app-w);
+  height: var(--app-h);
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 12px 40px rgba(0,0,0,.15);
+  background: #fff;
+}
+
+.hidden { display: none; }
+
+/* ===== Loading ===== */
+#loading-screen {
+  width: inherit; height: inherit;
+  background: linear-gradient(180deg,#8ec5ff,#e2b0ff);
+  display: grid; place-content: center;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.15);
+}
+#loading-screen .logo { font-size: 28px; font-weight: 800; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.25); text-align:center; }
+.loading-dot { width: 10px; height: 10px; border-radius: 50%; margin: 16px auto 0; background: #fff; animation: pulse 1s infinite; }
+@keyframes pulse { 0%{opacity:.2} 50%{opacity:1} 100%{opacity:.2} }
+
+/* ===== Top bar ===== */
+.top-bar {
+  height: 88px; display: grid; grid-template-columns: 64px 1fr 120px; gap: 8px;
+  align-items: center; padding: 8px 10px; background: #ffffffcc; backdrop-filter: blur(6px);
+  border-bottom: 1px solid #eee;
+}
+.icon-btn { width: 40px; height: 40px; border-radius: 12px; border: 1px solid #ddd; background:#fff; cursor:pointer; }
+
+.center-group { display: flex; justify-content: center; gap: 12px; }
+.counter { display:flex; flex-direction:column; align-items:center; min-width: 70px; }
+.counter .label { font-size: 12px; color:#666; }
+.counter .value { font-size: 18px; font-weight: 800; }
+
+.level-box { display:flex; flex-direction:column; gap:6px; }
+.level-row { display:flex; justify-content:space-between; font-size:12px; color:#555; }
+.level-bar { width:100%; height:8px; background:#eee; border-radius:100px; overflow:hidden; }
+.level-fill { height:100%; background: linear-gradient(90deg,#ffa8a8,#ffd089,#a8ffcf,#89c6ff,#c7a8ff); }
+
+/* ===== Claim life ===== */
+.claim-life { display:flex; flex-direction:column; align-items:center; gap:6px; padding: 8px 0; }
+.primary { background:#111; color:#fff; border:none; padding:10px 16px; border-radius:12px; cursor:pointer; }
+.timer.small { font-size:12px; color:#777; }
+
+/* ===== Preview ===== */
+.hero-preview { position: relative; height: 240px; display:grid; place-items:center; }
+.jumper-preview { width: 28px; height: 28px; background: #5b8cff; border-radius: 6px; animation: bob 1s infinite ease-in-out; }
+.jumper-preview.big { width: 44px; height: 44px; border-radius:10px; }
+@keyframes bob { 0%{ transform: translateY(0)} 50%{ transform: translateY(-16px)} 100%{ transform: translateY(0)} }
+.platform-demo { position:absolute; bottom: 40px; width:120px; height:10px; background:#66d08f; border-radius: 6px; }
+
+/* ===== Start & slots ===== */
+.start-area { display:flex; flex-direction:column; align-items:center; gap:10px; padding: 4px 0 12px; }
+.slots { display:flex; gap:8px; }
+.slot {
+  width:48px; height:48px; border-radius:12px; border:1px dashed #bbb; background:#fafafa; cursor:pointer; font-weight:700;
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+}
+.slot.locked { opacity:.5; cursor:not-allowed; }
+.start-btn { width: 200px; height: 48px; border-radius: 100px; border:none; background:#111; color:#fff; font-weight:800; cursor:pointer; }
+
+/* ===== Bottom nav ===== */
+.bottom-nav {
+  position:absolute; bottom:0; left:0; right:0; height:60px; border-top:1px solid #eee;
+  display:flex; justify-content:space-around; align-items:center; background:#fff;
+}
+.nav-btn { width:50px; height:40px; border:none; background:transparent; font-size:20px; cursor:pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.nav-btn.active { transform: translateY(-2px); }
+.nav-btn span { font-size: 10px; }
+
+/* ===== Subviews ===== */
+.subview { padding: 12px; font-size:14px; color:#444; }
+
+/* ===== Popover ===== */
+.popover {
+  position:absolute; top:52px; left:10px; width: 280px; background:#fff; border:1px solid #eee; border-radius:12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.12); z-index: 10;
+}
+.popover.hidden { display:none; }
+.popover-tabs { display:flex; gap:6px; padding:8px; }
+.popover-tabs .tab { flex:1; border:1px solid #eee; border-radius:10px; background:#fafafa; padding:8px; cursor:pointer; font-weight:700; text-align: center; }
+.popover-tabs .tab.active { background:#111; color:#fff; }
+.popover-content { padding:8px 10px 12px; }
+.avatar-preview { display:grid; place-items:center; padding:10px 0; }
+.profile-stats { display:grid; gap:6px; font-size:13px; }
+
+.settings-list { display:grid; gap:10px; }
+.list-btn { padding:10px; border-radius:10px; border:1px solid #eee; background:#fff; cursor:pointer; text-align:left; }
+.row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.links { gap:16px; }
+.links a { color:#0077ff; text-decoration:none; }
+
+/* Toggle switch */
+.switch { position:relative; display:inline-block; width:40px; height:22px; }
+.switch input { display:none; }
+.slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#ccc; transition:.2s; border-radius:100px; }
+.slider:before { position:absolute; content:""; height:18px; width:18px; left:2px; bottom:2px; background:white; transition:.2s; border-radius:50%; }
+input:checked + .slider { background:#111; }
+input:checked + .slider:before { transform: translateX(18px); }
+
+/* ===== Game Canvas ===== */
+#gameCanvas {
+  display: block;
+  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #87CEEB 0%, #98FB98 100%);
+  touch-action: none;
+}
+
+#score {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  color: white;
+  font-weight: bold;
+  font-size: 18px;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+  z-index: 100;
+}
+
+.game-ui {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.game-ui > * { pointer-events: all; }
