@@ -165,7 +165,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     const CONFIG = {
       deadzone: 2.5,        // Zona muerta para evitar micro-movimientos
       maxTilt: 25.0,        // Rango máximo cómodo
-      sensitivity: 1.0,    // Sensibilidad global reducida
+      sensitivity: 0.75,    // Sensibilidad global reducida
       smoothing: 0.25,      // Factor de suavizado
       acceleration: 1.2     // Multiplicador para inclinaciones grandes
     };
@@ -1515,19 +1515,17 @@ function addDebugInfo() {
   }
 }
 
-// Función para recalibrar manualmente (útil para testing)
+// Función para recalibrar manualmente (simplificada)
 function forceRecalibration() {
   if (IS_MOBILE) {
     isCalibrated = false;
     tiltHistory = [];
     calibrationOffset = 0;
     movementState = {
-      smoothedTilt: 0,
-      velocityBuffer: [],
-      lastRawTilt: 0,
-      stabilizationFrames: 0
+      lastValidInput: 0,
+      inputBuffer: []
     };
-    console.log('[DEBUG] Recalibración forzada iniciada');
+    console.log('[DEBUG] Recalibración forzada - respuesta rápida');
   }
 }
 
