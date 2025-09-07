@@ -118,7 +118,7 @@ const TILT_HISTORY_SIZE = 20;
 let rawTiltValue = 0;
 let filteredTilt = 0;
 let tiltFilter = 0;
-const TILT_FILTER_STRENGTH = 0.7;
+const TILT_FILTER_STRENGTH = 0.9;
 
 // Detección de dispositivo mejorada
 const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
