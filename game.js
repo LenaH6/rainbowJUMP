@@ -1106,11 +1106,11 @@ function update() {
       // Móvil: física con inclinación mejorada
       const baseAccel = w * 0.005;
       const maxSpeed = w * 0.010;
-      const friction = 0.85;
+      const friction = 0.75;
       
       const tiltIntensity = Math.abs(tiltInput);
       const accelMultiplier = 0.5 + (tiltIntensity * 1.5);
-      const currentAccel = baseAccel * accelMultiplier;
+      const currentAccel = baseAccel * 2.0;
       
       PLAYER.vx += currentAccel * tiltInput;
       
