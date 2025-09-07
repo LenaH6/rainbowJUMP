@@ -984,6 +984,10 @@ function startGame() {
 
   // Ajustar dimensiones HiDPI ahora que el canvas existe
   resizeCanvasToContainer();
+// iOS pide permiso explícito para deviceorientation
+if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  try { DeviceOrientationEvent.requestPermission().catch(()=>{}); } catch(_e) {}
+}
 
   // ===== Reset de continues WLD por partida =====
   deathCount = 0;
@@ -1169,19 +1173,32 @@ document.getElementById('btn-back-menu')?.addEventListener('click', ()=>{
   if (homeScreen) homeScreen.classList.remove('hidden');
 });
 
-// ===== INPUT HANDLING =====
-function shootBullet() {
+// Dispara desde el "cuerno" del jugador. La bala sale hacia ARRIBA
+// con ángulo a izq/centro/der según la X tocada en el canvas.
+function shootBulletAtX(touchX) {
   if (!isGameRunning || isPaused || isAwaitingContinue) return;
 
-  const hornOffsetX = PLAYER.w * 0.5; // centro (ajústalo si tu cuerno está a un lado)
-  const hornOffsetY = 4;
+  const cw = canvas.clientWidth;
 
-  const bx = PLAYER.x + hornOffsetX;
-  const by = PLAYER.y + hornOffsetY;
+  // 1) Punto de salida = cuerno (ajusta el offset si tu sprite no está centrado)
+  const hornX = PLAYER.x + PLAYER.w * 0.5; // centro del jugador
+  const hornY = PLAYER.y + 4;
 
-  const speedUp = 12;
-  bullets.push({ x: bx, y: by, dx: 0, dy: -speedUp, r: 4 });
+  // 2) Ángulo de disparo según dónde tocaste respecto del cuerno
+  //    Máximo ±60° respecto de vertical.
+  const maxAngle = Math.PI / 3; // 60°
+  const rel = (Math.max(0, Math.min(cw, touchX)) - hornX) / (cw * 0.5); // ~[-1..1]
+  const angle = Math.max(-maxAngle, Math.min(maxAngle, rel * maxAngle));
+
+  // 3) Velocidad: siempre hacia ARRIBA (dy negativo), con dx según el ángulo
+  const speed = 12;
+  const dx = Math.sin(angle) * speed;      // derecha/izquierda
+  const dy = -Math.cos(angle) * speed;     // siempre hacia ARRIBA
+
+  bullets.push({ x: hornX, y: hornY, dx, dy, r: 4 });
 }
+
+
 
 // ===== INPUT (PC vs Móvil) =====
 const IS_DESKTOP = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
@@ -1195,16 +1212,20 @@ if (IS_DESKTOP) {
     targetX = targetX * 0.7 + newTarget * 0.3;
   });
 }
-
-// Click / Touch = SOLO DISPARAR (no mueve)
+// CLICK = SOLO DISPARAR HACIA ARRIBA, EN LA X DEL CLICK
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
-  shootBullet(); // ignoramos posición; bala solo sube
+  const rect = canvas.getBoundingClientRect();
+  shootBulletAtX(e.clientX - rect.left);
 });
 
+// TOUCH = SOLO DISPARAR HACIA ARRIBA, EN LA X DEL TOUCH
 canvas.addEventListener("touchend", (e) => {
   if (!isGameRunning) return;
-  shootBullet(); // solo sube
+  const rect = canvas.getBoundingClientRect();
+  const t = e.changedTouches[0];
+  shootBulletAtX(t.clientX - rect.left);
   e.preventDefault();
 }, { passive: false });
+
 
