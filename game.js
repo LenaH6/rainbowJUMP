@@ -125,7 +125,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     // Calibración automática rápida
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= 8) {
+      if (tiltHistory.length >= 6) {
         // Usar mediana para calibración estable
         const sorted = [...tiltHistory].sort((a, b) => a - b);
         calibrationOffset = sorted[Math.floor(sorted.length / 2)];
@@ -140,8 +140,8 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     
     // Configuración tipo Doodle Jump - responsivo pero controlable
     const deadzone = 2.0;        // Zona muerta para evitar temblores
-    const maxTilt = 25;        // Rango máximo de inclinación
-    const sensitivity = 1.0;     // Sensibilidad global
+    const maxTilt = 23;        // Rango máximo de inclinación
+    const sensitivity = 0.8;     // Sensibilidad global
 
     // Aplicar zona muerta
     let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
