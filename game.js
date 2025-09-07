@@ -914,8 +914,8 @@ function update() {
   } else {
     // En móvil: física con inclinación (rápida y fluida)
     // Acel. proporcional al ancho: más grande → más “road”
-    const accel = 0.0028 * w;   // sensibilidad (sube/baja si quieres)
-    const friction = 0.90;      // 0.85 más suelto / 0.93 más pegado
+    const accel = 0.0035 * w;   // sensibilidad (sube/baja si quieres)
+    const friction = 0.88;      // 0.85 más suelto / 0.93 más pegado
 
     // Asegúrate de tener vx en tu PLAYER
     if (typeof PLAYER.vx !== 'number') PLAYER.vx = 0;
