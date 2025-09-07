@@ -1103,8 +1103,8 @@ function update() {
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
       // MÓVIL: Movimiento directo basado en inclinación
-      const baseSpeed = w * 3.0; // Velocidad base responsive al ancho de pantalla
-      const accelerationZone = 5.0; // Zona donde se aplica aceleración extra
+      const baseSpeed = w * 0.012; // Velocidad base responsive al ancho de pantalla
+      const accelerationZone = 0.3; // Zona donde se aplica aceleración extra
       
       // Procesar input de inclinación
       let moveSpeed = tiltInput * baseSpeed;
