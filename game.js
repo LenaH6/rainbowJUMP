@@ -1121,23 +1121,7 @@ function update() {
       const smoothingFactor = 0.85; // 85% movimiento directo, 15% suavizado
       PLAYER.x += moveSpeed * smoothingFactor;
     }
-// Función de recalibración mejorada
-window.recalibrateTilt = function() {
-  isCalibrated = false;
-  tiltHistory = [];
-  calibrationOffset = 0;
-  tiltInput = 0;
-  console.log('[TILT] Recalibrando... mantén el teléfono recto por 1 segundo');
-  
-  // Auto-recalibrar después de 2 segundos si no se ha hecho
-  setTimeout(() => {
-    if (!isCalibrated) {
-      console.log('[TILT] Auto-calibración completada');
-      isCalibrated = true;
-      calibrationOffset = 0;
-    }
-  }, 2000);
-};
+
     // ===== WRAP-AROUND COMPLETO =====
     // Si el jugador sale completamente por la derecha, aparece por la izquierda
     if (PLAYER.x > w) {
