@@ -125,12 +125,12 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     // Calibración automática rápida
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= 8) {
+      if (tiltHistory.length >= 3) {
         // Usar mediana para calibración estable
         const sorted = [...tiltHistory].sort((a, b) => a - b);
         calibrationOffset = sorted[Math.floor(sorted.length / 2)];
         isCalibrated = true;
-        console.log('[TILT] Calibrado automáticamente:', calibrationOffset.toFixed(2));
+        console.log('[TILT] Calibrado ultra-rápido:', calibrationOffset.toFixed(2));
       }
       return;
     }
@@ -139,9 +139,9 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     const calibratedGamma = rawGamma - calibrationOffset;
     
     // Configuración tipo Doodle Jump - responsivo pero controlable
-    const deadzone = 3.0;        // Zona muerta para evitar temblores
-    const maxTilt = 20.0;        // Rango máximo de inclinación
-    const sensitivity = 0.8;     // Sensibilidad global
+    const deadzone = 0.5;        // Zona muerta para evitar temblores
+    const maxTilt = 15.0;        // Rango máximo de inclinación
+    const sensitivity = 1.2;     // Sensibilidad global
 
     // Aplicar zona muerta
     let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
@@ -1103,8 +1103,8 @@ function update() {
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
       // MÓVIL: Movimiento directo basado en inclinación
-      const baseSpeed = w * 0.012; // Velocidad base responsive al ancho de pantalla
-      const accelerationZone = 0.3; // Zona donde se aplica aceleración extra
+      const baseSpeed = w * 0.022; // Velocidad base responsive al ancho de pantalla
+      const accelerationZone = 0.15; // Zona donde se aplica aceleración extra
       
       // Procesar input de inclinación
       let moveSpeed = tiltInput * baseSpeed;
@@ -1114,7 +1114,10 @@ function update() {
         const extraSpeed = (Math.abs(tiltInput) - accelerationZone) * baseSpeed * 0.8;
         moveSpeed += (tiltInput > 0 ? 1 : -1) * extraSpeed;
       }
-      
+      // BOOST ADICIONAL para inclinaciones muy grandes
+if (Math.abs(tiltInput) > 0.6) {
+  moveSpeed *= 1.3; // 30% más velocidad para inclinaciones grandes
+}
       // Aplicar movimiento - INMEDIATO y DIRECTO
       PLAYER.x += moveSpeed;
     }
