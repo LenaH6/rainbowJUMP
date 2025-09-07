@@ -1251,11 +1251,12 @@ function startGame() {
   const scoreElement = document.getElementById("score");
   if (scoreElement) scoreElement.innerText = "Score: 0";
 
-  // Reset sistema de inclinación COMPLETO
+  // Reset sistema de inclinación PARA MÁXIMA RESPUESTA
   isCalibrated = false;
   calibrationSamples = [];
   calibrationOffset = 0;
   tiltInput = 0;
+  rawTiltInput = 0; // Nuevo campo
   lastTiltTime = 0;
 
   // Posición inicial centrada
