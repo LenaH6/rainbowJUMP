@@ -141,7 +141,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     // Configuración tipo Doodle Jump - responsivo pero controlable
     const deadzone = 2.0;        // Zona muerta para evitar temblores
     const maxTilt = 25;        // Rango máximo de inclinación
-    const sensitivity = 0.06;     // Sensibilidad global
+    const sensitivity = 1.0;     // Sensibilidad global
 
     // Aplicar zona muerta
     let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
