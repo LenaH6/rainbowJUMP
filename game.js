@@ -151,7 +151,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     const CONFIG = {
       deadzone: 0.8,        // Zona muerta MÍN para máxima sensibilidad
       maxTilt: 15.0,        // Rango más pequeño = mayor sensibilidad
-      baseSensitivity: 1.8, // Sensibilidad base alta
+      baseSensitivity: 1.0, // Sensibilidad base alta
       acceleration: 2.5,    // Aceleración fuerte
       minSmoothiness: 0.05  // Suavizado mínimo para máxima respuesta
     };
