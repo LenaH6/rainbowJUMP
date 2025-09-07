@@ -59,8 +59,7 @@ const PLAYER = {
   w: 40,
   h: 40,
   dy: 0,
-  vx: 0, // Velocidad horizontal
-  // Propiedades visuales
+  vx: 0,
   glowIntensity: 0,
   trailParticles: []
 };
@@ -106,126 +105,96 @@ const BOOSTER_TYPES = {
   LONG: 'long'
 };
 
-// ===== MOBILE MOVEMENT SYSTEM - PROFESIONAL Y EQUILIBRADO =====
-let mouseX = 200, targetX = 200, smoothMouseX = 200;
+// ===== MOBILE MOVEMENT SYSTEM - COMPLETAMENTE REDISEÑADO =====
 let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
-let tiltHistory = [];
-let lastTiltUpdate = 0;
+let calibrationSamples = [];
+let lastTiltTime = 0;
 
 // Detección de dispositivo mejorada
 const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                 (navigator.maxTouchPoints > 0 && window.screen.width <= 1024);
-const IS_DESKTOP = !IS_MOBILE && window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+                 ('ontouchstart' in window) || 
+                 (navigator.maxTouchPoints > 0);
+const IS_DESKTOP = !IS_MOBILE;
 
-// Variables para el sistema de movimiento móvil
-let movementState = {
-  smoothedTilt: 0,
-  velocityBuffer: [],
-  lastRawTilt: 0,
-  stabilizationFrames: 0
-};
+// Variables para movimiento desktop
+let mouseX = 200, targetX = 200, smoothMouseX = 200;
 
-// Sistema de inclinación profesional para móviles
+// Sistema de inclinación COMPLETAMENTE NUEVO - MÁS AGRESIVO Y RESPONSIVO
 if (window.DeviceOrientationEvent && IS_MOBILE) {
-  console.log('[MOBILE] Inicializando controles de inclinación');
+  console.log('[MOBILE] Inicializando controles de inclinación MEJORADOS');
   
   window.addEventListener("deviceorientation", (e) => {
     const now = Date.now();
-    if (now - lastTiltUpdate < 16) return; // Limitar a ~60fps
-    lastTiltUpdate = now;
+    if (now - lastTiltTime < 10) return; // Aumentar frecuencia a 100fps
+    lastTiltTime = now;
     
     const rawGamma = e.gamma ?? 0;
     
-    // Sistema de calibración inteligente y rápido
+    // CALIBRACIÓN MÁS RÁPIDA Y PRECISA
     if (!isCalibrated) {
-      tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= 5) { // Mínimo 5 muestras para calibración estable
-        // Filtrar valores extremos y usar mediana
-        const sorted = [...tiltHistory].sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)];
-        
-        // Validar que la calibración sea razonable (entre -45 y 45 grados)
-        if (Math.abs(median) < 45) {
-          calibrationOffset = median;
-          isCalibrated = true;
-          console.log(`[TILT] Calibrado: ${calibrationOffset.toFixed(2)}°`);
-        } else {
-          tiltHistory = []; // Reiniciar si valores son extremos
-        }
+      calibrationSamples.push(rawGamma);
+      if (calibrationSamples.length >= 3) { // Solo 3 muestras para calibración ultra-rápida
+        // Usar promedio simple
+        calibrationOffset = calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length;
+        isCalibrated = true;
+        console.log(`[TILT] Calibración rápida completada: ${calibrationOffset.toFixed(2)}°`);
       }
       return;
     }
     
-    // Procesar inclinación calibrada
+    // PROCESAMIENTO DE INCLINACIÓN ULTRA AGRESIVO
     let calibratedGamma = rawGamma - calibrationOffset;
     
-    // Configuración equilibrada para juego
+    // Configuración ULTRA SENSIBLE
     const CONFIG = {
-      deadzone: 2.5,        // Zona muerta para evitar micro-movimientos
-      maxTilt: 25.0,        // Rango máximo cómodo
-      sensitivity: 0.75,    // Sensibilidad global reducida
-      smoothing: 0.25,      // Factor de suavizado
-      acceleration: 1.2     // Multiplicador para inclinaciones grandes
+      deadzone: 0.8,        // Zona muerta MÍN para máxima sensibilidad
+      maxTilt: 15.0,        // Rango más pequeño = mayor sensibilidad
+      baseSensitivity: 1.8, // Sensibilidad base alta
+      acceleration: 2.5,    // Aceleración fuerte
+      minSmoothiness: 0.05  // Suavizado mínimo para máxima respuesta
     };
     
-    // Aplicar zona muerta
+    // Zona muerta mínima
     if (Math.abs(calibratedGamma) < CONFIG.deadzone) {
       calibratedGamma = 0;
     }
     
-    // Limitar rango
+    // Limitar rango (más pequeño = más sensible)
     calibratedGamma = Math.max(-CONFIG.maxTilt, Math.min(CONFIG.maxTilt, calibratedGamma));
     
     // Normalizar (-1 a 1)
     let normalizedTilt = calibratedGamma / CONFIG.maxTilt;
     
-    // Curva de respuesta suave con aceleración gradual
+    // CURVA DE ACELERACIÓN AGRESIVA
     const absTilt = Math.abs(normalizedTilt);
     const sign = normalizedTilt >= 0 ? 1 : -1;
     
-    if (absTilt > 0.6) {
-      // Aceleración suave para movimientos grandes
-      normalizedTilt = sign * (0.6 + (absTilt - 0.6) * CONFIG.acceleration);
+    if (absTilt > 0.3) { // Acelerar desde movimientos pequeños
+      const acceleration = 1 + (absTilt - 0.3) * CONFIG.acceleration;
+      normalizedTilt = sign * (0.3 + (absTilt - 0.3) * acceleration);
     }
     
-    // Aplicar sensibilidad
-    normalizedTilt *= CONFIG.sensitivity;
+    // Aplicar sensibilidad base ALTA
+    normalizedTilt *= CONFIG.baseSensitivity;
     
-    // Suavizado temporal para estabilidad
-    movementState.smoothedTilt = movementState.smoothedTilt * (1 - CONFIG.smoothing) + 
-                                 normalizedTilt * CONFIG.smoothing;
+    // Clamp final para evitar valores extremos
+    normalizedTilt = Math.max(-1, Math.min(1, normalizedTilt));
     
-    // Buffer de velocidad para detectar movimientos bruscos
-    movementState.velocityBuffer.push(Math.abs(normalizedTilt - movementState.lastRawTilt));
-    if (movementState.velocityBuffer.length > 3) {
-      movementState.velocityBuffer.shift();
-    }
-    
-    // Detectar si el jugador está haciendo movimientos estables
-    const avgVelocity = movementState.velocityBuffer.reduce((a, b) => a + b, 0) / movementState.velocityBuffer.length;
-    if (avgVelocity < 0.1) {
-      movementState.stabilizationFrames++;
-    } else {
-      movementState.stabilizationFrames = 0;
-    }
-    
-    // Usar valor más estable si el jugador no está haciendo movimientos bruscos
-    tiltInput = movementState.stabilizationFrames > 5 ? movementState.smoothedTilt : normalizedTilt;
-    
-    movementState.lastRawTilt = normalizedTilt;
+    // SUAVIZADO MÍNIMO - priorizar respuesta inmediata
+    tiltInput = tiltInput * CONFIG.minSmoothiness + normalizedTilt * (1 - CONFIG.minSmoothiness);
     
   }, { passive: true });
   
-  // Recalibración automática si se detecta drift
+  // Auto-recalibración más agresiva
   setInterval(() => {
-    if (isGameRunning && isCalibrated && Math.abs(tiltInput) < 0.1) {
-      // Micro-ajuste de calibración durante juego estable
-      const adjustment = tiltInput * 0.01;
+    if (isGameRunning && isCalibrated && Math.abs(tiltInput) < 0.05) {
+      // Micro-ajuste más agresivo
+      const adjustment = tiltInput * 0.02;
       calibrationOffset += adjustment;
     }
-  }, 2000);
+  }, 1000); // Cada segundo en lugar de cada 2
 }
 
 // ===== PARTICLE SYSTEM =====
@@ -632,12 +601,13 @@ function updatePlatforms() {
       }
     }
     
-    // Colisiones
+    // Colisiones - CORREGIR BUG CRÍTICO
     if (!boosting && PLAYER.dy > 0) {
       const prevBottom = prevPlayerY + PLAYER.h;
       const nowBottom = PLAYER.y + PLAYER.h;
       
-      if (prevBottom <= p.y && nowBottom >= p.y) {
+      // FIX CRÍTICO: validar que prevPlayerY sea válido
+      if (prevBottom <= p.y && nowBottom >= p.y && prevPlayerY > 0) {
         const overlapX = (PLAYER.x < p.x + p.w) && (PLAYER.x + PLAYER.w > p.x);
         
         if (overlapX) {
@@ -713,7 +683,9 @@ function updateObstacles() {
     const obstacleLeft = o.x;
     const obstacleRight = o.x + o.w;
     
+    // FIX: Validar prevPlayerY antes de usar
     if (PLAYER.dy > 0 && 
+        prevPlayerY > 0 &&
         prevPlayerY + PLAYER.h <= obstacleTop && 
         playerBottom >= obstacleTop && 
         playerRight > obstacleLeft && 
@@ -727,12 +699,13 @@ function updateObstacles() {
       continue;
     }
     
-    // Colisión normal
-    if (playerLeft < obstacleRight && 
+    // Colisión normal - SOLO si el juego está corriendo correctamente
+    if (isGameRunning && !isAwaitingContinue && !isPaused &&
+        playerLeft < obstacleRight && 
         playerRight > obstacleLeft &&
         playerTop < obstacleBottom && 
         playerBottom > obstacleTop) {
-      endGame();
+      onPlayerDeath('obstacle');
       return;
     }
     
@@ -782,8 +755,9 @@ function updateBlackHoles() {
       }
     }
     
-    if (distance < bh.radius) {
-      endGame();
+    // FIX: Solo colisión de muerte si el juego está corriendo
+    if (isGameRunning && !isAwaitingContinue && !isPaused && distance < bh.radius) {
+      onPlayerDeath('blackhole');
       return;
     }
   }
@@ -1145,9 +1119,11 @@ function drawDifficultyInfo() {
 
 // ===== MAIN UPDATE LOOP =====
 function update() {
+  if (!ctx || !canvas) return;
+  
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   
-  // ===== SISTEMA DE MOVIMIENTO HORIZONTAL EQUILIBRADO =====
+  // ===== SISTEMA DE MOVIMIENTO HORIZONTAL MEJORADO =====
   {
     const w = canvas.clientWidth;
 
@@ -1159,31 +1135,26 @@ function update() {
       smoothMouseX = smoothMouseX * 0.8 + clampedTarget * 0.2;
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
-      // MÓVIL: Sistema equilibrado con múltiples mejoras
-      const baseSpeed = w * 0.012; // Velocidad base más conservadora
+      // MÓVIL: Sistema ULTRA RESPONSIVO
+      const baseSpeed = w * 0.025; // Velocidad base MUY ALTA
       
-      // Aplicar movimiento con curva de respuesta equilibrada
+      // Aplicar movimiento DIRECTO con multiplicadores agresivos
       let moveSpeed = tiltInput * baseSpeed;
       
-      // Zona de aceleración progresiva
+      // Aceleración EXTREMA para cualquier inclinación > 0.2
       const absInput = Math.abs(tiltInput);
-      if (absInput > 0.4) {
-        // Aceleración suave para inclinaciones moderadas-altas
-        const extraMultiplier = 1 + (absInput - 0.4) * 0.8;
-        moveSpeed *= extraMultiplier;
+      if (absInput > 0.2) {
+        const boostMultiplier = 1 + (absInput - 0.2) * 2.0; // Multiplicador x3 máximo
+        moveSpeed *= boostMultiplier;
       }
       
-      // Boost adicional para movimientos muy rápidos (solo en situaciones extremas)
-      if (absInput > 0.8) {
-        moveSpeed *= 1.1; // Solo 10% más velocidad para movimientos extremos
+      // Aplicar movimiento DIRECTO - sin suavizado
+      PLAYER.x += moveSpeed;
+      
+      // Debug para móvil
+      if (Date.now() % 1000 < 50) { // Log cada segundo aprox
+        console.log(`[MOBILE] Tilt: ${tiltInput.toFixed(3)}, Speed: ${moveSpeed.toFixed(2)}, PlayerX: ${PLAYER.x.toFixed(1)}`);
       }
-      
-      // Aplicar movimiento con micro-suavizado para estabilidad
-      const currentX = PLAYER.x;
-      const targetXPos = currentX + moveSpeed;
-      
-      // Suavizado mínimo para eliminar jitter sin afectar respuesta
-      PLAYER.x = currentX * 0.15 + targetXPos * 0.85;
     }
 
     // ===== WRAP-AROUND COMPLETO =====
@@ -1211,8 +1182,8 @@ function update() {
   updateParticles();
   cleanupElements();
   
-  // Verificar caída
-  if (PLAYER.y > canvas.clientHeight + 60) {
+  // Verificar caída - SOLO si el juego está corriendo
+  if (isGameRunning && !isAwaitingContinue && PLAYER.y > canvas.clientHeight + 60) {
     onPlayerDeath('fall');
     return;
   }
@@ -1227,7 +1198,9 @@ function update() {
   drawParticles();
   drawDifficultyInfo();
   
+  // IMPORTANTE: Actualizar prevPlayerY AL FINAL
   prevPlayerY = PLAYER.y;
+  
   if (isGameRunning) requestAnimationFrame(update);
 }
 
@@ -1242,20 +1215,23 @@ function startGame() {
 
   resizeCanvasToContainer();
 
-  // Solicitar permisos en iOS de forma más robusta
+  // Solicitar permisos en iOS MEJORADO
   if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    console.log('[iOS] Solicitando permisos...');
     DeviceOrientationEvent.requestPermission()
       .then(response => {
         if (response === 'granted') {
           console.log('[iOS] Permisos de orientación concedidos');
+        } else {
+          console.warn('[iOS] Permisos denegados:', response);
         }
       })
       .catch(error => {
-        console.warn('[iOS] No se pudieron obtener permisos de orientación:', error);
+        console.error('[iOS] Error solicitando permisos:', error);
       });
   }
 
-  // Reset estado
+  // Reset estado COMPLETO
   deathCount = 0;
   continuePriceWLD = 0.11;
   isPaused = false;
@@ -1275,20 +1251,12 @@ function startGame() {
   const scoreElement = document.getElementById("score");
   if (scoreElement) scoreElement.innerText = "Score: 0";
 
-  // Reset sistema de inclinación con estado limpio
+  // Reset sistema de inclinación COMPLETO
   isCalibrated = false;
-  tiltHistory = [];
+  calibrationSamples = [];
   calibrationOffset = 0;
   tiltInput = 0;
-  lastTiltUpdate = 0;
-  
-  // Reset estado de movimiento
-  movementState = {
-    smoothedTilt: 0,
-    velocityBuffer: [],
-    lastRawTilt: 0,
-    stabilizationFrames: 0
-  };
+  lastTiltTime = 0;
 
   // Posición inicial centrada
   PLAYER.x = c.clientWidth / 2 - PLAYER.w / 2;
@@ -1296,7 +1264,7 @@ function startGame() {
   PLAYER.dy = 0;
   PLAYER.vx = 0;
   PLAYER.glowIntensity = 0;
-  prevPlayerY = PLAYER.y;
+  prevPlayerY = PLAYER.y; // IMPORTANTE: Inicializar correctamente
 
   // Objetivos de movimiento
   mouseX = c.clientWidth / 2;
@@ -1306,6 +1274,8 @@ function startGame() {
   bullets = [];
   createInitialPlatforms();
 
+  console.log('[GAME] Juego iniciado correctamente');
+
   // Fin del booster inicial
   setTimeout(() => {
     boosting = false;
@@ -1313,13 +1283,17 @@ function startGame() {
     initialBoost = false;
     gameStarted = true;
     maybeSpawnNewTopPlatforms();
+    console.log('[GAME] Booster inicial terminado');
   }, 1800);
 
   update();
 }
 
 function finalizeGameOver() {
+  console.log('[GAME] Finalizando game over');
   isGameRunning = false;
+  isAwaitingContinue = false; // IMPORTANTE
+  
   if (window.uiState) {
     const s = window.uiState;
     if (score > s.highScore) s.highScore = score;
@@ -1337,14 +1311,24 @@ function finalizeGameOver() {
   $overlayGameOver?.classList.remove('hidden');
 }
 
+// FIX CRÍTICO: Función endGame simplificada
 function endGame() {
+  console.log('[GAME] Juego terminado - transición a game over');
   onPlayerDeath('generic');
 }
 
+// FIX CRÍTICO: onPlayerDeath mejorado
 function onPlayerDeath(reason) {
-  if (!isGameRunning) return;
-  isAwaitingContinue = true;
+  console.log(`[GAME] Jugador murió: ${reason}`);
+  
+  if (!isGameRunning || isAwaitingContinue) {
+    console.log('[GAME] Muerte ignorada - juego no está corriendo o ya esperando continue');
+    return;
+  }
+  
+  // Detener el juego INMEDIATAMENTE
   isGameRunning = false;
+  isAwaitingContinue = true;
   setPaused(false);
 
   deathCount += 1;
@@ -1374,17 +1358,32 @@ function startPieCountdown(seconds) {
   }, 100);
 }
 
+// FIX CRÍTICO: applyContinue corregido
 async function applyContinue() {
-  const ok = typeof window.payForContinueWLD === 'function'
-    ? await window.payForContinueWLD(continuePriceWLD)
-    : true;
+  console.log(`[CONTINUE] Aplicando continue por ${continuePriceWLD} WLD`);
+  
+  // SIMULAR pago exitoso por ahora - CAMBIAR cuando tengas la función real
+  let paymentOk = true;
+  
+  if (typeof window.payForContinueWLD === 'function') {
+    try {
+      paymentOk = await window.payForContinueWLD(continuePriceWLD);
+      console.log(`[CONTINUE] Resultado del pago: ${paymentOk}`);
+    } catch (error) {
+      console.error('[CONTINUE] Error en el pago:', error);
+      paymentOk = false;
+    }
+  }
 
-  if (!ok) {
+  if (!paymentOk) {
+    console.log('[CONTINUE] Pago fallido - yendo a game over');
+    clearInterval(continueTimerId);
     $overlayContinue?.classList.add('hidden');
     showFinalGameOver();
     return;
   }
 
+  console.log('[CONTINUE] Pago exitoso - respawneando jugador');
   safeRespawn();
   clearInterval(continueTimerId);
   $overlayContinue?.classList.add('hidden');
@@ -1394,21 +1393,35 @@ async function applyContinue() {
 }
 
 function showFinalGameOver() {
+  console.log('[GAME] Mostrando game over final');
   finalizeGameOver();
 }
 
 function safeRespawn() {
+  console.log('[RESPAWN] Respawneando jugador de forma segura');
+  
   const y = canvas.clientHeight * 0.6;
   const w = 100;
   const x = (canvas.clientWidth - w)/2;
-  platforms.push({ x, y, w, h: PLATFORM_H, type: 'normal', vx:0, vy:0, baseY:y });
+  
+  // Crear plataforma segura
+  platforms.push({ 
+    x, y, w, h: PLATFORM_H, 
+    type: PLATFORM_TYPES.NORMAL, 
+    vx: 0, vy: 0, baseY: y 
+  });
 
+  // Posicionar jugador
   PLAYER.x = x + (w - PLAYER.w)/2;
-  PLAYER.y = y - PLAYER.h - 1;
+  PLAYER.y = y - PLAYER.h - 5;
   PLAYER.dy = jumpStrength * 0.9;
+  prevPlayerY = PLAYER.y; // IMPORTANTE: actualizar prevPlayerY
 
-  obstacles = obstacles.filter(o => o.y < y - 40 || o.y > y + 80);
+  // Limpiar obstáculos cercanos
+  obstacles = obstacles.filter(o => o.y < y - 50 || o.y > y + 100);
   blackHoles = blackHoles.filter(bh => bh.y < y - 80 || bh.y > y + 120);
+  
+  console.log(`[RESPAWN] Jugador respawneado en X:${PLAYER.x.toFixed(1)}, Y:${PLAYER.y.toFixed(1)}`);
 }
 
 // ===== SHOOTING SYSTEM =====
@@ -1436,6 +1449,7 @@ function shootBulletAtX(touchX) {
 // ===== EVENT HANDLERS =====
 function setPaused(v) {
   isPaused = !!v;
+  console.log(`[PAUSE] Pausa ${isPaused ? 'activada' : 'desactivada'}`);
   if (isPaused) { 
     $overlayPause?.classList.remove('hidden'); 
   } else { 
@@ -1491,11 +1505,13 @@ $pauseBtn?.addEventListener('click', () => setPaused(!isPaused));
 document.getElementById('btn-resume')?.addEventListener('click', () => setPaused(false));
 document.getElementById('btn-continue')?.addEventListener('click', applyContinue);
 document.getElementById('btn-no-continue')?.addEventListener('click', () => {
+  console.log('[CONTINUE] Usuario rechazó continue');
   clearInterval(continueTimerId);
   $overlayContinue?.classList.add('hidden');
   showFinalGameOver();
 });
 document.getElementById('btn-back-menu')?.addEventListener('click', () => {
+  console.log('[UI] Volviendo al menú principal');
   $overlayGameOver?.classList.add('hidden');
   const gameContainer = document.getElementById('game-container');
   const homeScreen = document.getElementById('home-screen');
@@ -1503,29 +1519,28 @@ document.getElementById('btn-back-menu')?.addEventListener('click', () => {
   if (homeScreen) homeScreen.classList.remove('hidden');
 });
 
-// ===== FUNCIONES DE UTILIDAD PARA DEBUGGING (SOLO EN DESARROLLO) =====
+// ===== FUNCIONES DE UTILIDAD PARA DEBUGGING =====
 function addDebugInfo() {
   if (typeof console !== 'undefined' && IS_MOBILE) {
-    // Debug info cada 3 segundos solo en móvil
+    // Debug info cada 5 segundos solo en móvil
     setInterval(() => {
       if (isGameRunning) {
-        console.log(`[DEBUG] Tilt: ${tiltInput.toFixed(3)}, Calibrated: ${isCalibrated}, Player X: ${PLAYER.x.toFixed(1)}`);
+        console.log(`[DEBUG] Tilt: ${tiltInput.toFixed(3)}, Calibrated: ${isCalibrated}, Player X: ${PLAYER.x.toFixed(1)}, Game State: running`);
+      } else {
+        console.log(`[DEBUG] Game State: ${isAwaitingContinue ? 'awaiting-continue' : 'stopped'}`);
       }
-    }, 3000);
+    }, 5000);
   }
 }
 
-// Función para recalibrar manualmente (simplificada)
+// Función para recalibrar manualmente (mejorada)
 function forceRecalibration() {
   if (IS_MOBILE) {
     isCalibrated = false;
-    tiltHistory = [];
+    calibrationSamples = [];
     calibrationOffset = 0;
-    movementState = {
-      lastValidInput: 0,
-      inputBuffer: []
-    };
-    console.log('[DEBUG] Recalibración forzada - respuesta rápida');
+    tiltInput = 0;
+    console.log('[DEBUG] Recalibración forzada - sistema reset');
   }
 }
 
@@ -1535,20 +1550,36 @@ if (window.location.hostname === 'localhost' || window.location.hostname === '12
   addDebugInfo();
   // Exponer función de recalibración para debugging
   window.forceRecalibration = forceRecalibration;
+  window.gameDebug = {
+    getCurrentTilt: () => tiltInput,
+    isCalibrated: () => isCalibrated,
+    getCalibrationOffset: () => calibrationOffset,
+    getGameState: () => ({
+      isGameRunning,
+      isAwaitingContinue,
+      isPaused,
+      score,
+      deathCount
+    }),
+    forceRecalibration: forceRecalibration
+  };
 }
 
-// Asegurar que el canvas tenga el foco correcto en móviles
-if (IS_MOBILE && canvas) {
+// Asegurar que el canvas tenga el foco correcto
+if (canvas) {
   canvas.setAttribute('tabindex', '0');
   canvas.style.outline = 'none';
+  
+  // Prevenir el scroll del body cuando se toca el canvas
+  canvas.style.touchAction = 'none';
 }
 
 // Event listener para cuando la orientación cambie
 window.addEventListener('orientationchange', () => {
   setTimeout(() => {
     resizeCanvasToContainer();
-    // Pequeño delay para recalibrar después de cambio de orientación
-    if (IS_MOBILE && isGameRunning) {
+    // Recalibrar después de cambio de orientación
+    if (IS_MOBILE && (isGameRunning || isAwaitingContinue)) {
       setTimeout(() => {
         forceRecalibration();
       }, 500);
@@ -1558,7 +1589,7 @@ window.addEventListener('orientationchange', () => {
 
 // Event listener para cuando la aplicación regrese del background
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && IS_MOBILE && isGameRunning) {
+  if (document.visibilityState === 'visible' && IS_MOBILE && (isGameRunning || isAwaitingContinue)) {
     // Recalibrar cuando la app regrese del background
     setTimeout(() => {
       forceRecalibration();
@@ -1566,16 +1597,24 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// Prevenir el zoom en iOS
+document.addEventListener('gesturestart', function (e) {
+  e.preventDefault();
+});
+
+document.addEventListener('gesturechange', function (e) {
+  e.preventDefault();
+});
+
+document.addEventListener('gestureend', function (e) {
+  e.preventDefault();
+});
+
 // ===== EXPORTS =====
 window.startGame = startGame;
 
-// Exportar funciones adicionales para debugging si es necesario
-if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-  window.gameDebug = {
-    getCurrentTilt: () => tiltInput,
-    isCalibrated: () => isCalibrated,
-    getCalibrationOffset: () => calibrationOffset,
-    getMovementState: () => ({ ...movementState }),
-    forceRecalibration: forceRecalibration
-  };
+console.log('[GAME] Sistema de juego cargado correctamente');
+console.log(`[DEVICE] Tipo: ${IS_MOBILE ? 'MÓVIL' : 'DESKTOP'}`);
+if (IS_MOBILE) {
+  console.log('[MOBILE] Sistema de inclinación mejorado activado');
 }
