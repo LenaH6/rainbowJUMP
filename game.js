@@ -59,8 +59,8 @@ const PLAYER = {
   w: 40,
   h: 40,
   dy: 0,
-  vx: 0, // Velocidad horizontal para móviles
-  // Propiedades visuales mejoradas
+  vx: 0, // Velocidad horizontal
+  // Propiedades visuales
   glowIntensity: 0,
   trailParticles: []
 };
@@ -76,7 +76,7 @@ let obstacles = [];
 let blackHoles = [];
 let boosters = [];
 let bullets = [];
-let particles = []; // Para efectos visuales
+let particles = [];
 
 // Configuraciones
 const BASE_PLATFORM_W = 90;
@@ -106,74 +106,69 @@ const BOOSTER_TYPES = {
   LONG: 'long'
 };
 
-// ===== OPTIMIZED MOBILE MOVEMENT =====
+// ===== MOBILE MOVEMENT OPTIMIZADO COMO DOODLE JUMP =====
 let mouseX = 200, targetX = 200, smoothMouseX = 200;
 let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
-
-// Sistema de calibración rápida
 let tiltHistory = [];
-const TILT_HISTORY_SIZE = 10; // Reducido para calibración más rápida
-let rawTiltValue = 0;
 
-// Detección de dispositivo mejorada
+// Detección de dispositivo
 const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 const IS_DESKTOP = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
 
+// Sistema de inclinación optimizado para móviles
 if (window.DeviceOrientationEvent && IS_MOBILE) {
   window.addEventListener("deviceorientation", (e) => {
     const rawGamma = e.gamma ?? 0;
-    rawTiltValue = rawGamma;
 
-    // Auto-calibración rápida
+    // Calibración automática rápida
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= TILT_HISTORY_SIZE) {
-        const sortedHistory = [...tiltHistory].sort((a, b) => a - b);
-        calibrationOffset = sortedHistory[Math.floor(sortedHistory.length / 2)];
+      if (tiltHistory.length >= 8) {
+        // Usar mediana para calibración estable
+        const sorted = [...tiltHistory].sort((a, b) => a - b);
+        calibrationOffset = sorted[Math.floor(sorted.length / 2)];
         isCalibrated = true;
-        console.log('[TILT] Calibrado en:', calibrationOffset.toFixed(2));
+        console.log('[TILT] Calibrado automáticamente:', calibrationOffset.toFixed(2));
       }
       return;
     }
 
-    // Aplicar calibración SIN filtros para máxima responsividad
-    const gamma = rawGamma - calibrationOffset;
-
-    // Configuración optimizada para responsividad tipo Doodle Jump
-    const deadzone = 1.5; // Zona muerta pequeña
-    const maxTilt = 25; // Rango de inclinación amplio
+    // Procesar inclinación calibrada
+    const calibratedGamma = rawGamma - calibrationOffset;
     
-    let processedTilt = Math.abs(gamma) < deadzone ? 0 : gamma;
+    // Configuración tipo Doodle Jump - responsivo pero controlable
+    const deadzone = 3.0;        // Zona muerta para evitar temblores
+    const maxTilt = 20.0;        // Rango máximo de inclinación
+    const sensitivity = 0.8;     // Sensibilidad global
+
+    // Aplicar zona muerta
+    let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
+    
+    // Limitar rango
     processedTilt = Math.max(-maxTilt, Math.min(maxTilt, processedTilt));
     
-    // Mapeo lineal directo para máxima responsividad
-    tiltInput = processedTilt / maxTilt;
+    // Convertir a valor normalizado (-1 a 1)
+    let normalizedTilt = processedTilt / maxTilt;
     
-    // Pequeño boost para inclinaciones suaves
-    if (Math.abs(tiltInput) > 0.1) {
-      const sign = tiltInput >= 0 ? 1 : -1;
-      tiltInput = sign * Math.min(1, Math.abs(tiltInput) * 1.2);
-    }
+    // Aplicar curva de respuesta suave para mejor control
+    const sign = normalizedTilt >= 0 ? 1 : -1;
+    normalizedTilt = sign * Math.pow(Math.abs(normalizedTilt), 0.75);
+    
+    // Aplicar sensibilidad final
+    tiltInput = normalizedTilt * sensitivity;
+    
   }, { passive: true });
 }
 
-// Función de recalibración optimizada
+// Función de recalibración manual
 window.recalibrateTilt = function() {
   isCalibrated = false;
   tiltHistory = [];
   calibrationOffset = 0;
-  console.log('[TILT] Recalibrando... (Será más rápido)');
-};
-
-// Función de recalibración mejorada
-window.recalibrateTilt = function() {
-  isCalibrated = false;
-  tiltHistory = [];
-  calibrationOffset = 0;
-  tiltFilter = 0;
-  console.log('[TILT] Recalibrando...');
+  tiltInput = 0;
+  console.log('[TILT] Iniciando recalibración...');
 };
 
 // ===== PARTICLE SYSTEM =====
@@ -192,9 +187,9 @@ class Particle {
   update() {
     this.x += this.vx;
     this.y += this.vy;
-    this.vy += 0.1; // Pequeña gravedad
+    this.vy += 0.1;
     this.life--;
-    this.vx *= 0.99; // Fricción
+    this.vx *= 0.99;
   }
   
   draw(ctx) {
@@ -1094,7 +1089,8 @@ function drawDifficultyInfo() {
 // ===== MAIN UPDATE LOOP =====
 function update() {
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  // ===== MOVIMIENTO HORIZONTAL OPTIMIZADO =====
+  
+  // ===== MOVIMIENTO HORIZONTAL ESTILO DOODLE JUMP =====
   {
     const w = canvas.clientWidth;
 
@@ -1106,35 +1102,31 @@ function update() {
       smoothMouseX = smoothMouseX * 0.7 + clampedTarget * 0.3;
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
-      // MÓVIL: Control directo tipo Doodle Jump - SIN física de aceleración
-      const sensitivity = w * 0.25; // Sensibilidad alta para respuesta inmediata
-      const deadzone = 0.05; // Zona muerta muy pequeña
+      // MÓVIL: Movimiento directo basado en inclinación
+      const baseSpeed = w * 0.012; // Velocidad base responsive al ancho de pantalla
+      const accelerationZone = 0.3; // Zona donde se aplica aceleración extra
       
-      // Input procesado con boost para pequeñas inclinaciones
-      let processedInput = Math.abs(tiltInput) < deadzone ? 0 : tiltInput;
+      // Procesar input de inclinación
+      let moveSpeed = tiltInput * baseSpeed;
       
-      // Velocidad inmediata proporcional a la inclinación
-      const immediateSpeed = processedInput * sensitivity * 0.06;
-      
-      // Aplicar movimiento directo - MÁS responsivo
-      PLAYER.x += immediateSpeed;
-      
-      // Límites suaves
-      const margin = PLAYER.w * 0.3;
-      if (PLAYER.x < -margin) {
-        PLAYER.x = -margin;
-      } else if (PLAYER.x > w - PLAYER.w + margin) {
-        PLAYER.x = w - PLAYER.w + margin;
+      // Acelerar movimiento para inclinaciones grandes
+      if (Math.abs(tiltInput) > accelerationZone) {
+        const extraSpeed = (Math.abs(tiltInput) - accelerationZone) * baseSpeed * 0.8;
+        moveSpeed += (tiltInput > 0 ? 1 : -1) * extraSpeed;
       }
+      
+      // Aplicar movimiento - INMEDIATO y DIRECTO
+      PLAYER.x += moveSpeed;
     }
 
-    // Wrap-around mejorado
-    const wrapMargin = PLAYER.w * 0.1;
-    
-    if (PLAYER.x + PLAYER.w < -wrapMargin) {
-      PLAYER.x = w + wrapMargin;
-    } else if (PLAYER.x > w + wrapMargin) {
-      PLAYER.x = -PLAYER.w - wrapMargin;
+    // ===== WRAP-AROUND COMPLETO =====
+    // Si el jugador sale completamente por la derecha, aparece por la izquierda
+    if (PLAYER.x > w) {
+      PLAYER.x = -PLAYER.w;
+    }
+    // Si el jugador sale completamente por la izquierda, aparece por la derecha  
+    else if (PLAYER.x + PLAYER.w < 0) {
+      PLAYER.x = w;
     }
   }
 
@@ -1213,7 +1205,7 @@ function startGame() {
   const scoreElement = document.getElementById("score");
   if (scoreElement) scoreElement.innerText = "Score: 0";
 
-// Reset inclinación para calibración rápida
+  // Reset sistema de inclinación
   isCalibrated = false;
   tiltHistory = [];
   calibrationOffset = 0;
@@ -1223,6 +1215,7 @@ function startGame() {
   PLAYER.x = c.clientWidth / 2 - PLAYER.w / 2;
   PLAYER.y = c.clientHeight - 100;
   PLAYER.dy = 0;
+  PLAYER.vx = 0;
   PLAYER.glowIntensity = 0;
   prevPlayerY = PLAYER.y;
 
