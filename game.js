@@ -139,9 +139,9 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     const calibratedGamma = rawGamma - calibrationOffset;
     
     // Configuración tipo Doodle Jump - responsivo pero controlable
-    const deadzone = 0.5;        // Zona muerta para evitar temblores
-    const maxTilt = 15.0;        // Rango máximo de inclinación
-    const sensitivity = 0.8;     // Sensibilidad global
+    const deadzone = 2.0;        // Zona muerta para evitar temblores
+    const maxTilt = 25;        // Rango máximo de inclinación
+    const sensitivity = 0.06;     // Sensibilidad global
 
     // Aplicar zona muerta
     let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
@@ -1103,8 +1103,8 @@ function update() {
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
       // MÓVIL: Movimiento directo basado en inclinación
-      const baseSpeed = w * 0.012; // Velocidad base responsive al ancho de pantalla
-      const accelerationZone = 0.3; // Zona donde se aplica aceleración extra
+      const baseSpeed = w * 3.0; // Velocidad base responsive al ancho de pantalla
+      const accelerationZone = 5.0; // Zona donde se aplica aceleración extra
       
       // Procesar input de inclinación
       let moveSpeed = tiltInput * baseSpeed;
