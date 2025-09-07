@@ -149,8 +149,8 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     filteredTilt = tiltFilter;
 
     // Configuración de sensibilidad
-    const deadzone = 0.5;
-    const maxTilt = 25;
+    const deadzone = 1.0;
+    const maxTilt = 20;
     
     let processedTilt = Math.abs(filteredTilt) < deadzone ? 0 : filteredTilt;
     processedTilt = Math.max(-maxTilt, Math.min(maxTilt, processedTilt));
@@ -1104,9 +1104,9 @@ function update() {
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
       // Móvil: física con inclinación mejorada
-      const baseAccel = w * 0.004;
-      const maxSpeed = w * 0.015;
-      const friction = 0.92;
+      const baseAccel = w * 0.002;
+      const maxSpeed = w * 0.010;
+      const friction = 0.95;
       
       const tiltIntensity = Math.abs(tiltInput);
       const accelMultiplier = 0.5 + (tiltIntensity * 1.5);
