@@ -103,6 +103,8 @@ const BOOSTER_TYPES = {
 
 // ===== IMPROVED MOBILE MOVEMENT =====
 let mouseX = 200, targetX = 200, smoothMouseX = 200; // se corrigen en startGame()
+// Input normalizado de inclinación (-1..1). Usado SOLO en móvil.
+let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
 
@@ -112,10 +114,9 @@ const TILT_HISTORY_SIZE = 10;
 
   if (window.DeviceOrientationEvent) {
   window.addEventListener("deviceorientation", (e) => {
-    if (!canvas) return; // si aún no hay canvas, sal
-    const rawGamma = e.gamma || 0;
+    const rawGamma = e.gamma ?? 0;
 
-    // auto-calibración
+    // auto-calibración (usa tus mismas variables)
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
       if (tiltHistory.length >= TILT_HISTORY_SIZE) {
@@ -125,22 +126,20 @@ const TILT_HISTORY_SIZE = 10;
       return;
     }
 
-    const gamma = rawGamma - calibrationOffset;
-    const deadzone = 1, maxTilt = 20, smoothing = 0.85;
-    let adjustedGamma = Math.abs(gamma) < deadzone ? 0 : gamma;
-    const normalizedTilt = Math.max(-maxTilt, Math.min(maxTilt, adjustedGamma));
-    let tiltRatio = normalizedTilt / maxTilt;
-    const sign = tiltRatio >= 0 ? 1 : -1;
-    tiltRatio = sign * Math.pow(Math.abs(tiltRatio), 0.8);
+    // curva rápida y con poca latencia
+    const gamma = rawGamma - calibrationOffset; // grados
+    const deadzone = 1;
+    const maxTilt  = 20;
+    let g = Math.abs(gamma) < deadzone ? 0 : gamma;
+    g = Math.max(-maxTilt, Math.min(maxTilt, g));
+    let ratio = g / maxTilt;                    // -1..1
+    const sgn = ratio >= 0 ? 1 : -1;
+    ratio = sgn * Math.pow(Math.abs(ratio), 0.8);
 
-    const center = canvas.clientWidth / 2;
-    const newTargetX = center + (tiltRatio * center * 0.85);
-
-    targetX = targetX * smoothing + newTargetX * (1 - smoothing);
-    targetX = Math.max(PLAYER.w, Math.min(canvas.clientWidth - PLAYER.w, targetX));
+    // guardamos input de tilt para la física
+    tiltInput = Math.max(-1, Math.min(1, ratio));
   });
 }
-
 
 
 // Botón de recalibración para depuración
@@ -901,21 +900,40 @@ function drawDifficultyInfo() {
 // ===== MAIN UPDATE LOOP =====
 function update() {
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-// ===== MOVIMIENTO HORIZONTAL (mouse/tilt unificados) =====
+// ===== MOVIMIENTO HORIZONTAL (tilt o mouse) =====
 {
-  // límites del canvas
   const w = canvas.clientWidth;
 
-  // recortamos para no salirnos
-  const minCenter = PLAYER.w / 2;
-  const maxCenter = w - PLAYER.w / 2;
-  const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
+  // En PC: seguir al mouse suavizado (lo ya existente)
+  if (IS_DESKTOP) {
+    const minCenter = PLAYER.w / 2;
+    const maxCenter = w - PLAYER.w / 2;
+    const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
+    smoothMouseX = smoothMouseX * 0.85 + clampedTarget * 0.15;
+    PLAYER.x = smoothMouseX - PLAYER.w / 2;
+  } else {
+    // En móvil: física con inclinación (rápida y fluida)
+    // Acel. proporcional al ancho: más grande → más “road”
+    const accel = 0.0028 * w;   // sensibilidad (sube/baja si quieres)
+    const friction = 0.90;      // 0.85 más suelto / 0.93 más pegado
 
-  // suavizado hacia el objetivo
-  smoothMouseX = smoothMouseX * 0.85 + clampedTarget * 0.15;
+    // Asegúrate de tener vx en tu PLAYER
+    if (typeof PLAYER.vx !== 'number') PLAYER.vx = 0;
 
-  // colocamos al jugador (x = centro - mitad del ancho)
-  PLAYER.x = smoothMouseX - PLAYER.w / 2;
+    // aplica aceleración por tilt
+    PLAYER.vx += accel * tiltInput;
+    PLAYER.vx *= friction;
+
+    // avanza
+    PLAYER.x += PLAYER.vx;
+  }
+
+  // ===== WRAP-AROUND (sin paredes) =====
+  if (PLAYER.x > w) {
+    PLAYER.x = -PLAYER.w + 1;
+  } else if (PLAYER.x + PLAYER.w < 0) {
+    PLAYER.x = w - 1;
+  }
 }
 
   // Pausa dura: no avanzar simulación, solo mantener overlay visible
@@ -1152,41 +1170,41 @@ document.getElementById('btn-back-menu')?.addEventListener('click', ()=>{
 });
 
 // ===== INPUT HANDLING =====
-function shootBullet(clickX) {
+function shootBullet() {
   if (!isGameRunning || isPaused || isAwaitingContinue) return;
-  
-  const playerCenterX = PLAYER.x + PLAYER.w / 2;
-  const cw = canvas.clientWidth;
-  
-  const relativeClick = clickX / cw;
-  
-  let bullet = { 
-    x: playerCenterX, 
-    y: PLAYER.y, 
-    dx: 0, 
-    dy: -16 // Balas más rápidas
-  };
-  
-  if (relativeClick < 0.33) {
-    bullet.dx = -8;
-  } else if (relativeClick > 0.67) {
-    bullet.dx = 8;
-  }
-  
-  bullets.push(bullet);
-}
-// ===== CONTROL POR MOUSE (PC) =====
-canvas.addEventListener("mousemove", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const newTarget = e.clientX - rect.left;    // x dentro del canvas
-  // actualizamos el objetivo con suavizado ligero
-  targetX = targetX * 0.7 + newTarget * 0.3;
-});
 
-// Disparo con click (útil en PC)
+  const hornOffsetX = PLAYER.w * 0.5; // centro (ajústalo si tu cuerno está a un lado)
+  const hornOffsetY = 4;
+
+  const bx = PLAYER.x + hornOffsetX;
+  const by = PLAYER.y + hornOffsetY;
+
+  const speedUp = 12;
+  bullets.push({ x: bx, y: by, dx: 0, dy: -speedUp, r: 4 });
+}
+
+// ===== INPUT (PC vs Móvil) =====
+const IS_DESKTOP = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+
+// En PC: mover con mouse
+if (IS_DESKTOP) {
+  canvas.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const newTarget = e.clientX - rect.left;
+    // suavizado
+    targetX = targetX * 0.7 + newTarget * 0.3;
+  });
+}
+
+// Click / Touch = SOLO DISPARAR (no mueve)
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
-  const rect = canvas.getBoundingClientRect();
-  const clickX = e.clientX - rect.left;
-  shootBullet(clickX);
+  shootBullet(); // ignoramos posición; bala solo sube
 });
+
+canvas.addEventListener("touchend", (e) => {
+  if (!isGameRunning) return;
+  shootBullet(); // solo sube
+  e.preventDefault();
+}, { passive: false });
+
