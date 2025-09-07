@@ -165,7 +165,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     const CONFIG = {
       deadzone: 2.5,        // Zona muerta para evitar micro-movimientos
       maxTilt: 25.0,        // Rango máximo cómodo
-      sensitivity: 0.75,    // Sensibilidad global reducida
+      sensitivity: 1.0,    // Sensibilidad global reducida
       smoothing: 0.25,      // Factor de suavizado
       acceleration: 1.2     // Multiplicador para inclinaciones grandes
     };
