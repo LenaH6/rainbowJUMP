@@ -112,12 +112,60 @@
 
   <!-- Game Container -->
   <div id="game-container" class="screen hidden">
-    <div class="game-ui"><div id="score">Score: 0</div></div>
-    <canvas id="gameCanvas"></canvas>
+    <div class="game-ui">
+  <div id="score">Score: 0</div>
+  <canvas id="gameCanvas"></canvas>
+
+
+  <!-- Botón Pausa -->
+  <button id="btn-pause" class="pause-btn" aria-label="Pausar/Reanudar">⏸️</button>
+
+  <!-- Overlay: Pausado -->
+  <div id="overlay-pause" class="overlay hidden">
+    <div class="modal">
+      <h3>Juego en pausa</h3>
+      <button id="btn-resume" class="btn primary">Reanudar</button>
+    </div>
   </div>
 
-  <script src="./miniapp.js"></script>
-  <script src="./ui.js"></script>
-  <script src="./game.js"></script>
+  <!-- Overlay: ¿Continuar? (soft game over) -->
+  <div id="overlay-continue" class="overlay hidden">
+    <div class="modal">
+      <h3>¿Quieres continuar?</h3>
+      <div class="price">Costo: <span id="continue-price">0.11 WLD</span></div>
+
+      <!-- Timer en “torta/pie” 5s -->
+      <div class="pie-wrap">
+        <div class="pie-timer" id="pie-timer"></div>
+        <div class="pie-label" id="pie-label">5</div>
+      </div>
+
+      <div class="actions">
+        <button id="btn-continue" class="btn primary">Continuar</button>
+        <button id="btn-no-continue" class="btn">No, gracias</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overlay: Game Over real -->
+  <div id="overlay-gameover" class="overlay hidden">
+    <div class="modal">
+      <h3>Game Over</h3>
+      <p class="stats">
+        Score: <strong id="final-score">0</strong><br/>
+        Monedas ganadas: <strong id="final-coins">0</strong><br/>
+        Tokens por eventos: <strong>Próximamente</strong>
+      </p>
+      <button id="btn-back-menu" class="btn primary">Volver al menú</button>
+    </div>
+  </div>
+</div>
+
+
+  <!-- scripts: DEBEN ir después del canvas -->
+  <script src="miniapp.js"></script>
+  <script src="ui.js"></script>
+  <script src="game.js"></script>
 </body>
 </html>
+

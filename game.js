@@ -1,9 +1,10 @@
 // ===== GAME CORE =====
 const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
+if (!canvas) { console.error("[RJ] #gameCanvas no está en el DOM"); }
+const ctx = canvas ? canvas.getContext("2d") : null;
 
-// HiDPI scaling to container
 function resizeCanvasToContainer() {
+  if (!canvas || !ctx) return;
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   const w = Math.max(1, Math.floor(rect.width * dpr));
@@ -14,8 +15,9 @@ function resizeCanvasToContainer() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 }
-window.addEventListener('resize', resizeCanvasToContainer);
+window.addEventListener("resize", resizeCanvasToContainer);
 resizeCanvasToContainer();
+
 
 // ===== WORLD STATE =====
 let isGameRunning = false;
@@ -26,6 +28,29 @@ let score = 0;
 let cameraY = 0;
 let prevPlayerY = 0;
 let gameStarted = false;
+// ===== PAUSE & CONTINUE STATE =====
+let isPaused = false;
+let isAwaitingContinue = false;
+let deathCount = 0;
+let continuePriceWLD = 0.11;
+let continueDeadline = 0;  // timestamp ms
+let continueTimerId = null;
+// Sistema de cadenas (si aún no lo usas, igual decláralo para evitar errores)
+let breakableChain = [];
+let activeChainIndex = -1;
+let isChainActive = false;
+
+
+// Helper UI refs
+const $pauseBtn = document.getElementById('btn-pause');
+const $overlayPause = document.getElementById('overlay-pause');
+const $overlayContinue = document.getElementById('overlay-continue');
+const $overlayGameOver = document.getElementById('overlay-gameover');
+const $continuePrice = document.getElementById('continue-price');
+const $pie = document.getElementById('pie-timer');
+const $pieLabel = document.getElementById('pie-label');
+const $finalScore = document.getElementById('final-score');
+const $finalCoins = document.getElementById('final-coins');
 
 const PLAYER = {
   x: 180,
@@ -46,6 +71,7 @@ let obstacles = [];
 let blackHoles = [];
 let boosters = [];
 let bullets = [];
+
 
 // Configuraciones
 const BASE_PLATFORM_W = 90;
@@ -76,9 +102,7 @@ const BOOSTER_TYPES = {
 };
 
 // ===== IMPROVED MOBILE MOVEMENT =====
-let mouseX = canvas.clientWidth / 2;
-let targetX = canvas.clientWidth / 2;
-let smoothMouseX = canvas.clientWidth / 2;
+let mouseX = 200, targetX = 200, smoothMouseX = 200; // se corrigen en startGame()
 let calibrationOffset = 0;
 let isCalibrated = false;
 
@@ -86,51 +110,38 @@ let isCalibrated = false;
 let tiltHistory = [];
 const TILT_HISTORY_SIZE = 10;
 
-// Movimiento perfeccionado con inclinación
-if (window.DeviceOrientationEvent) {
+  if (window.DeviceOrientationEvent) {
   window.addEventListener("deviceorientation", (e) => {
+    if (!canvas) return; // si aún no hay canvas, sal
     const rawGamma = e.gamma || 0;
-    
-    // Auto-calibración: tomar promedio de primeras lecturas como centro
+
+    // auto-calibración
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
       if (tiltHistory.length >= TILT_HISTORY_SIZE) {
-        calibrationOffset = tiltHistory.reduce((a, b) => a + b, 0) / tiltHistory.length;
+        calibrationOffset = tiltHistory.reduce((a,b)=>a+b,0) / tiltHistory.length;
         isCalibrated = true;
-        console.log("Calibrado con offset:", calibrationOffset);
       }
       return;
     }
-    
-    // Aplicar calibración
+
     const gamma = rawGamma - calibrationOffset;
-    
-    // Configuración ultra-fluida
-    const sensitivity = 15; // Muy responsivo
-    const deadzone = 1; // Zona muerta mínima
-    const maxTilt = 20; // Rango más natural
-    const smoothing = 0.85; // Suavizado agresivo
-    
-    // Aplicar zona muerta
+    const deadzone = 1, maxTilt = 20, smoothing = 0.85;
     let adjustedGamma = Math.abs(gamma) < deadzone ? 0 : gamma;
-    
-    // Normalizar con límites suaves
     const normalizedTilt = Math.max(-maxTilt, Math.min(maxTilt, adjustedGamma));
-    let tiltRatio = (normalizedTilt / maxTilt);
-    
-    // Aplicar curva exponencial suave para mejor control
+    let tiltRatio = normalizedTilt / maxTilt;
     const sign = tiltRatio >= 0 ? 1 : -1;
-    tiltRatio = sign * Math.pow(Math.abs(tiltRatio), 0.8); // Curva suave
-    
-    const cw = canvas.clientWidth;
-    const center = cw / 2;
+    tiltRatio = sign * Math.pow(Math.abs(tiltRatio), 0.8);
+
+    const center = canvas.clientWidth / 2;
     const newTargetX = center + (tiltRatio * center * 0.85);
-    
-    // Suavizado ultra-fluido
+
     targetX = targetX * smoothing + newTargetX * (1 - smoothing);
-    targetX = Math.max(PLAYER.w, Math.min(cw - PLAYER.w, targetX));
+    targetX = Math.max(PLAYER.w, Math.min(canvas.clientWidth - PLAYER.w, targetX));
   });
 }
+
+
 
 // Botón de recalibración para depuración
 window.recalibrateTilt = function() {
@@ -138,14 +149,6 @@ window.recalibrateTilt = function() {
   tiltHistory = [];
   calibrationOffset = 0;
 };
-
-// Fallback para mouse con suavizado
-canvas.addEventListener("mousemove", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const newTarget = e.clientX - rect.left;
-  targetX = targetX * 0.7 + newTarget * 0.3; // Suavizado también en mouse
-});
-
 // ===== PROGRESSIVE DIFFICULTY SYSTEM =====
 function getDifficulty() {
   // Progresión muy gradual cada 200 puntos (más frecuente)
@@ -898,7 +901,31 @@ function drawDifficultyInfo() {
 // ===== MAIN UPDATE LOOP =====
 function update() {
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  
+// ===== MOVIMIENTO HORIZONTAL (mouse/tilt unificados) =====
+{
+  // límites del canvas
+  const w = canvas.clientWidth;
+
+  // recortamos para no salirnos
+  const minCenter = PLAYER.w / 2;
+  const maxCenter = w - PLAYER.w / 2;
+  const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
+
+  // suavizado hacia el objetivo
+  smoothMouseX = smoothMouseX * 0.85 + clampedTarget * 0.15;
+
+  // colocamos al jugador (x = centro - mitad del ancho)
+  PLAYER.x = smoothMouseX - PLAYER.w / 2;
+}
+
+  // Pausa dura: no avanzar simulación, solo mantener overlay visible
+if (isPaused || isAwaitingContinue){
+  // Dibuja elementos mínimos si quieres (opcional)
+  // No avanza física ni spawns
+  if (isGameRunning) requestAnimationFrame(update);
+  return;
+}
+
   updatePlayer();
   updateCamera();
   updatePlatforms();
@@ -908,10 +935,11 @@ function update() {
   updateBullets();
   cleanupElements();
   
-  if (PLAYER.y > canvas.clientHeight + 60) {
-    endGame();
-    return;
-  }
+ if (PLAYER.y > canvas.clientHeight + 60) {
+  onPlayerDeath('fall');
+  return;
+}
+
   
   // Drawing
   drawPlayer();
@@ -928,7 +956,27 @@ function update() {
 
 // ===== GAME START/END =====
 function startGame() {
+  // Tomar referencias locales y validar
+  const c = canvas;
+  const context = ctx;
+  if (!c || !context) {
+    console.error('[RJ] Canvas no disponible al iniciar');
+    return;
+  }
+
+  // Ajustar dimensiones HiDPI ahora que el canvas existe
   resizeCanvasToContainer();
+
+  // ===== Reset de continues WLD por partida =====
+  deathCount = 0;
+  continuePriceWLD = 0.11;
+  isPaused = false;
+  isAwaitingContinue = false;
+  $overlayPause?.classList.add('hidden');
+  $overlayContinue?.classList.add('hidden');
+  $overlayGameOver?.classList.add('hidden');
+
+  // ===== Estado base del juego =====
   isGameRunning = true;
   boosting = true;
   initialBoost = true;
@@ -936,43 +984,45 @@ function startGame() {
   score = 0;
   cameraY = 0;
   gameStarted = false;
-  
-  // Actualizar score en UI inmediatamente
+
+  // UI score
   const scoreElement = document.getElementById("score");
-  if (scoreElement) {
-    scoreElement.innerText = "Score: 0";
-  }
-  
-  // Reset calibración
+  if (scoreElement) scoreElement.innerText = "Score: 0";
+
+  // Reset inclinación
   isCalibrated = false;
   tiltHistory = [];
   calibrationOffset = 0;
-  
-  PLAYER.x = canvas.clientWidth/2 - PLAYER.w/2;
-  PLAYER.y = canvas.clientHeight - 100;
+
+  // Posición inicial del jugador (USAR 'c', NO 'canvas')
+  PLAYER.x = c.clientWidth  / 2 - PLAYER.w / 2;
+  PLAYER.y = c.clientHeight - 100;
   PLAYER.dy = 0;
   prevPlayerY = PLAYER.y;
-  
-  mouseX = canvas.clientWidth / 2;
-  targetX = canvas.clientWidth / 2;
-  smoothMouseX = canvas.clientWidth / 2;
-  
+
+  // Objetivos de movimiento (USAR 'c', NO 'canvas')
+  mouseX       = c.clientWidth / 2;
+  targetX      = c.clientWidth / 2;
+  smoothMouseX = c.clientWidth / 2;
+
+  // Mundo
   bullets = [];
-  
   createInitialPlatforms();
-  
-  setTimeout(() => { 
-    boosting = false; 
+
+  // Fin del booster inicial y primer spawn
+  setTimeout(() => {
+    boosting = false;
     boostingTime = 0;
     initialBoost = false;
-    gameStarted = true; // IMPORTANTE: Activar gameStarted aquí
+    gameStarted = true;
     maybeSpawnNewTopPlatforms();
   }, 1800);
-  
+
   update();
 }
 
-function endGame() {
+
+function finalizeGameOver() {
   isGameRunning = false;
   if (window.uiState) {
     const s = window.uiState;
@@ -982,27 +1032,128 @@ function endGame() {
     s.avgScore = total / s.games;
     s.coins += Math.floor(score / 100);
     s.levelXP += Math.floor(score / 50);
-    while (s.levelXP >= 100) { 
-      s.levelXP -= 100; 
-      s.level += 1; 
-    }
+    while (s.levelXP >= 100) { s.levelXP -= 100; s.level += 1; }
     if (typeof window.renderTop === 'function') window.renderTop();
     if (typeof window.saveProgress === 'function') window.saveProgress();
   }
-  
-  // Actualizar elementos de UI si existen
-  const gameContainer = document.getElementById('game-container');
-  const homeScreen = document.getElementById('home-screen');
-  
-  if (gameContainer) gameContainer.classList.add('hidden');
-  if (homeScreen) homeScreen.classList.remove('hidden');
+  // Mostrar overlay final (quedarse en game view hasta que el usuario vuelva)
+  $finalScore && ($finalScore.textContent = String(score));
+  $finalCoins && ($finalCoins.textContent = String(Math.floor(score/100)));
+  $overlayGameOver?.classList.remove('hidden');
+}
+// ===== SOFT GAME OVER (¿Continuar?) =====
+function endGame(){
+  onPlayerDeath('generic');
 }
 
+function onPlayerDeath(reason){
+  if (!isGameRunning) return;
+  isAwaitingContinue = true;
+  isGameRunning = false; // pausamos el loop, reanudamos tras continue
+  setPaused(false);
+
+  deathCount += 1;
+  continuePriceWLD = 0.11 + 0.05 * (deathCount - 1);
+  if ($continuePrice) $continuePrice.textContent = `${continuePriceWLD.toFixed(2)} WLD`;
+
+  // Mostrar overlay y arrancar cuenta 5s
+  $overlayContinue?.classList.remove('hidden');
+  startPieCountdown(5); // segundos
+}
+
+function startPieCountdown(seconds){
+  clearInterval(continueTimerId);
+  const total = seconds * 1000;
+  continueDeadline = Date.now() + total;
+
+  continueTimerId = setInterval(()=>{
+    const left = Math.max(0, continueDeadline - Date.now());
+    const pct = 1 - left / total;                 // 0..1
+    const angle = Math.floor(360 * pct) + 'deg';  // 0..360
+    if ($pie) $pie.style.setProperty('--angle', angle);
+    if ($pieLabel) $pieLabel.textContent = String(Math.ceil(left/1000));
+    if (left <= 0){
+      clearInterval(continueTimerId);
+      $overlayContinue?.classList.add('hidden');
+      showFinalGameOver();
+    }
+  }, 100);
+}
+
+async function applyContinue(){
+  // Cobro simulado en WLD
+  const ok = typeof window.payForContinueWLD === 'function'
+    ? await window.payForContinueWLD(continuePriceWLD)
+    : true;
+
+  if (!ok){
+    // No se pagó
+    $overlayContinue?.classList.add('hidden');
+    showFinalGameOver();
+    return;
+  }
+
+  // Reubicación segura
+  safeRespawn();
+  // Cerrar overlay y reanudar
+  clearInterval(continueTimerId);
+  $overlayContinue?.classList.add('hidden');
+  isAwaitingContinue = false;
+  isGameRunning = true;
+  update(); // retomar loop
+}
+
+function showFinalGameOver(){
+  finalizeGameOver();
+}
+
+function safeRespawn(){
+  // Plataformita de rescate en 60% inferior
+  const y = canvas.clientHeight * 0.6;
+  const w = 100;
+  const x = (canvas.clientWidth - w)/2;
+  platforms.push({ x, y, w, h: PLATFORM_H, type: 'normal', vx:0, vy:0, baseY:y });
+
+  // Colocar al jugador sobre esa plataforma y pequeño boost
+  PLAYER.x = x + (w - PLAYER.w)/2;
+  PLAYER.y = y - PLAYER.h - 1;
+  PLAYER.dy = jumpStrength * 0.9;
+
+  // Limpieza básica alrededor
+  obstacles = obstacles.filter(o => o.y < y - 40 || o.y > y + 80);
+  blackHoles = blackHoles.filter(bh => bh.y < y - 80 || bh.y > y + 120);
+}
+
+
 window.startGame = startGame;
+// ===== PAUSE HANDLERS =====
+function setPaused(v){
+  isPaused = !!v;
+  if (isPaused){ $overlayPause?.classList.remove('hidden'); }
+  else { $overlayPause?.classList.add('hidden'); }
+}
+$pauseBtn?.addEventListener('click', ()=> setPaused(!isPaused));
+
+document.getElementById('btn-resume')?.addEventListener('click', ()=> setPaused(false));
+// ===== OVERLAY BUTTONS =====
+document.getElementById('btn-continue')?.addEventListener('click', applyContinue);
+document.getElementById('btn-no-continue')?.addEventListener('click', ()=>{
+  clearInterval(continueTimerId);
+  $overlayContinue?.classList.add('hidden');
+  showFinalGameOver();
+});
+document.getElementById('btn-back-menu')?.addEventListener('click', ()=>{
+  // Volver al Home (cerrar overlays y mostrar Home)
+  $overlayGameOver?.classList.add('hidden');
+  const gameContainer = document.getElementById('game-container');
+  const homeScreen = document.getElementById('home-screen');
+  if (gameContainer) gameContainer.classList.add('hidden');
+  if (homeScreen) homeScreen.classList.remove('hidden');
+});
 
 // ===== INPUT HANDLING =====
 function shootBullet(clickX) {
-  if (!isGameRunning) return;
+  if (!isGameRunning || isPaused || isAwaitingContinue) return;
   
   const playerCenterX = PLAYER.x + PLAYER.w / 2;
   const cw = canvas.clientWidth;
@@ -1024,16 +1175,15 @@ function shootBullet(clickX) {
   
   bullets.push(bullet);
 }
-
-canvas.addEventListener("touchend", (e) => {
-  if (!isGameRunning) return;
+// ===== CONTROL POR MOUSE (PC) =====
+canvas.addEventListener("mousemove", (e) => {
   const rect = canvas.getBoundingClientRect();
-  const touch = e.changedTouches[0];
-  const touchX = touch.clientX - rect.left;
-  shootBullet(touchX);
-  e.preventDefault();
-}, { passive: false });
+  const newTarget = e.clientX - rect.left;    // x dentro del canvas
+  // actualizamos el objetivo con suavizado ligero
+  targetX = targetX * 0.7 + newTarget * 0.3;
+});
 
+// Disparo con click (útil en PC)
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
   const rect = canvas.getBoundingClientRect();
