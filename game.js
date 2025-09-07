@@ -125,7 +125,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     // Calibración automática rápida
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= 4) {
+      if (tiltHistory.length >= 3) {
         // Usar mediana para calibración estable
         const sorted = [...tiltHistory].sort((a, b) => a - b);
         calibrationOffset = sorted[Math.floor(sorted.length / 2)];
@@ -139,9 +139,9 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     const calibratedGamma = rawGamma - calibrationOffset;
     
     // Configuración tipo Doodle Jump - responsivo pero controlable
-    const deadzone = 2.0;        // Zona muerta para evitar temblores
-    const maxTilt = 23;        // Rango máximo de inclinación
-    const sensitivity = 1;     // Sensibilidad global
+    const deadzone = 1.0;        // Zona muerta para evitar temblores
+    const maxTilt = 18.0;        // Rango máximo de inclinación
+    const sensitivity = 1.1;     // Sensibilidad global
 
     // Aplicar zona muerta
     let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
@@ -152,24 +152,22 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     // Convertir a valor normalizado (-1 a 1)
     let normalizedTilt = processedTilt / maxTilt;
     
-    // Aplicar curva de respuesta suave para mejor control
+    // Curva de respuesta HÍBRIDA - directa para movimientos pequeños, suave para grandes
     const sign = normalizedTilt >= 0 ? 1 : -1;
-    normalizedTilt = sign * Math.pow(Math.abs(normalizedTilt), 1);
+    const absNorm = Math.abs(normalizedTilt);
     
-    // Aplicar sensibilidad final
-    tiltInput = normalizedTilt * sensitivity;
+    if (absNorm < 0.3) {
+      // Movimientos pequeños: respuesta completamente lineal (directa)
+      normalizedTilt = normalizedTilt;
+    } else {
+      // Movimientos grandes: ligera suavización para control
+      normalizedTilt = sign * (0.3 + (absNorm - 0.3) * Math.pow(absNorm - 0.3, 0.85));
+    }
     
   }, { passive: true });
 }
 
-// Función de recalibración manual
-window.recalibrateTilt = function() {
-  isCalibrated = false;
-  tiltHistory = [];
-  calibrationOffset = 0;
-  tiltInput = 0;
-  console.log('[TILT] Iniciando recalibración...');
-};
+
 
 // ===== PARTICLE SYSTEM =====
 class Particle {
@@ -1103,22 +1101,43 @@ function update() {
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
       // MÓVIL: Movimiento directo basado en inclinación
-      const baseSpeed = w * 0.012; // Velocidad base responsive al ancho de pantalla
-      const accelerationZone = 0.3; // Zona donde se aplica aceleración extra
+      const baseSpeed = w * 0.016; // Velocidad base responsive al ancho de pantalla
+      const accelerationZone = 0.2; // Zona donde se aplica aceleración extra
       
       // Procesar input de inclinación
       let moveSpeed = tiltInput * baseSpeed;
       
       // Acelerar movimiento para inclinaciones grandes
       if (Math.abs(tiltInput) > accelerationZone) {
-        const extraSpeed = (Math.abs(tiltInput) - accelerationZone) * baseSpeed * 0.8;
+        const extraSpeed = (Math.abs(tiltInput) - accelerationZone) * baseSpeed * 1.0;
         moveSpeed += (tiltInput > 0 ? 1 : -1) * extraSpeed;
       }
-
-      // Aplicar movimiento - INMEDIATO y DIRECTO
-      PLAYER.x += moveSpeed;
+   // Boost moderado para inclinaciones muy grandes
+      if (Math.abs(tiltInput) > 0.7) {
+        moveSpeed *= 1.15; // Solo 15% más velocidad (no 30%)
+      }
+      
+      // Aplicar movimiento directo pero con micro-suavizado para estabilidad
+      const smoothingFactor = 0.85; // 85% movimiento directo, 15% suavizado
+      PLAYER.x += moveSpeed * smoothingFactor;
     }
-
+// Función de recalibración mejorada
+window.recalibrateTilt = function() {
+  isCalibrated = false;
+  tiltHistory = [];
+  calibrationOffset = 0;
+  tiltInput = 0;
+  console.log('[TILT] Recalibrando... mantén el teléfono recto por 1 segundo');
+  
+  // Auto-recalibrar después de 2 segundos si no se ha hecho
+  setTimeout(() => {
+    if (!isCalibrated) {
+      console.log('[TILT] Auto-calibración completada');
+      isCalibrated = true;
+      calibrationOffset = 0;
+    }
+  }, 2000);
+};
     // ===== WRAP-AROUND COMPLETO =====
     // Si el jugador sale completamente por la derecha, aparece por la izquierda
     if (PLAYER.x > w) {
