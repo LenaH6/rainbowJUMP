@@ -125,7 +125,7 @@ if (window.DeviceOrientationEvent && IS_MOBILE) {
     // Calibración automática rápida
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= 3) {
+      if (tiltHistory.length >= 8) {
         // Usar mediana para calibración estable
         const sorted = [...tiltHistory].sort((a, b) => a - b);
         calibrationOffset = sorted[Math.floor(sorted.length / 2)];
