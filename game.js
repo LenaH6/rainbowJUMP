@@ -106,68 +106,127 @@ const BOOSTER_TYPES = {
   LONG: 'long'
 };
 
-// ===== MOBILE MOVEMENT OPTIMIZADO COMO DOODLE JUMP =====
+// ===== MOBILE MOVEMENT SYSTEM - PROFESIONAL Y EQUILIBRADO =====
 let mouseX = 200, targetX = 200, smoothMouseX = 200;
 let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
 let tiltHistory = [];
+let lastTiltUpdate = 0;
 
-// Detección de dispositivo
-const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-const IS_DESKTOP = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+// Detección de dispositivo mejorada
+const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                 (navigator.maxTouchPoints > 0 && window.screen.width <= 1024);
+const IS_DESKTOP = !IS_MOBILE && window.matchMedia && window.matchMedia('(pointer: fine)').matches;
 
-// Sistema de inclinación optimizado para móviles
+// Variables para el sistema de movimiento móvil
+let movementState = {
+  smoothedTilt: 0,
+  velocityBuffer: [],
+  lastRawTilt: 0,
+  stabilizationFrames: 0
+};
+
+// Sistema de inclinación profesional para móviles
 if (window.DeviceOrientationEvent && IS_MOBILE) {
+  console.log('[MOBILE] Inicializando controles de inclinación');
+  
   window.addEventListener("deviceorientation", (e) => {
+    const now = Date.now();
+    if (now - lastTiltUpdate < 16) return; // Limitar a ~60fps
+    lastTiltUpdate = now;
+    
     const rawGamma = e.gamma ?? 0;
-
-    // Calibración automática rápida
+    
+    // Sistema de calibración inteligente y rápido
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
-      if (tiltHistory.length >= 3) {
-        // Usar mediana para calibración estable
+      if (tiltHistory.length >= 5) { // Mínimo 5 muestras para calibración estable
+        // Filtrar valores extremos y usar mediana
         const sorted = [...tiltHistory].sort((a, b) => a - b);
-        calibrationOffset = sorted[Math.floor(sorted.length / 2)];
-        isCalibrated = true;
-        console.log('[TILT] Calibrado ultra-rápido:', calibrationOffset.toFixed(2));
+        const median = sorted[Math.floor(sorted.length / 2)];
+        
+        // Validar que la calibración sea razonable (entre -45 y 45 grados)
+        if (Math.abs(median) < 45) {
+          calibrationOffset = median;
+          isCalibrated = true;
+          console.log(`[TILT] Calibrado: ${calibrationOffset.toFixed(2)}°`);
+        } else {
+          tiltHistory = []; // Reiniciar si valores son extremos
+        }
       }
       return;
     }
-
+    
     // Procesar inclinación calibrada
-    const calibratedGamma = rawGamma - calibrationOffset;
+    let calibratedGamma = rawGamma - calibrationOffset;
     
-    // Configuración tipo Doodle Jump - responsivo pero controlable
-    const deadzone = 1.0;        // Zona muerta para evitar temblores
-    const maxTilt = 18.0;        // Rango máximo de inclinación
-    const sensitivity = 1.1;     // Sensibilidad global
-
+    // Configuración equilibrada para juego
+    const CONFIG = {
+      deadzone: 2.5,        // Zona muerta para evitar micro-movimientos
+      maxTilt: 25.0,        // Rango máximo cómodo
+      sensitivity: 0.75,    // Sensibilidad global reducida
+      smoothing: 0.25,      // Factor de suavizado
+      acceleration: 1.2     // Multiplicador para inclinaciones grandes
+    };
+    
     // Aplicar zona muerta
-    let processedTilt = Math.abs(calibratedGamma) < deadzone ? 0 : calibratedGamma;
-    
-    // Limitar rango
-    processedTilt = Math.max(-maxTilt, Math.min(maxTilt, processedTilt));
-    
-    // Convertir a valor normalizado (-1 a 1)
-    let normalizedTilt = processedTilt / maxTilt;
-    
-    // Curva de respuesta HÍBRIDA - directa para movimientos pequeños, suave para grandes
-    const sign = normalizedTilt >= 0 ? 1 : -1;
-    const absNorm = Math.abs(normalizedTilt);
-    
-    if (absNorm < 0.3) {
-      // Movimientos pequeños: respuesta completamente lineal (directa)
-      normalizedTilt = normalizedTilt;
-    } else {
-      // Movimientos grandes: ligera suavización para control
-      normalizedTilt = sign * (0.3 + (absNorm - 0.3) * Math.pow(absNorm - 0.3, 0.85));
+    if (Math.abs(calibratedGamma) < CONFIG.deadzone) {
+      calibratedGamma = 0;
     }
     
+    // Limitar rango
+    calibratedGamma = Math.max(-CONFIG.maxTilt, Math.min(CONFIG.maxTilt, calibratedGamma));
+    
+    // Normalizar (-1 a 1)
+    let normalizedTilt = calibratedGamma / CONFIG.maxTilt;
+    
+    // Curva de respuesta suave con aceleración gradual
+    const absTilt = Math.abs(normalizedTilt);
+    const sign = normalizedTilt >= 0 ? 1 : -1;
+    
+    if (absTilt > 0.6) {
+      // Aceleración suave para movimientos grandes
+      normalizedTilt = sign * (0.6 + (absTilt - 0.6) * CONFIG.acceleration);
+    }
+    
+    // Aplicar sensibilidad
+    normalizedTilt *= CONFIG.sensitivity;
+    
+    // Suavizado temporal para estabilidad
+    movementState.smoothedTilt = movementState.smoothedTilt * (1 - CONFIG.smoothing) + 
+                                 normalizedTilt * CONFIG.smoothing;
+    
+    // Buffer de velocidad para detectar movimientos bruscos
+    movementState.velocityBuffer.push(Math.abs(normalizedTilt - movementState.lastRawTilt));
+    if (movementState.velocityBuffer.length > 3) {
+      movementState.velocityBuffer.shift();
+    }
+    
+    // Detectar si el jugador está haciendo movimientos estables
+    const avgVelocity = movementState.velocityBuffer.reduce((a, b) => a + b, 0) / movementState.velocityBuffer.length;
+    if (avgVelocity < 0.1) {
+      movementState.stabilizationFrames++;
+    } else {
+      movementState.stabilizationFrames = 0;
+    }
+    
+    // Usar valor más estable si el jugador no está haciendo movimientos bruscos
+    tiltInput = movementState.stabilizationFrames > 5 ? movementState.smoothedTilt : normalizedTilt;
+    
+    movementState.lastRawTilt = normalizedTilt;
+    
   }, { passive: true });
+  
+  // Recalibración automática si se detecta drift
+  setInterval(() => {
+    if (isGameRunning && isCalibrated && Math.abs(tiltInput) < 0.1) {
+      // Micro-ajuste de calibración durante juego estable
+      const adjustment = tiltInput * 0.01;
+      calibrationOffset += adjustment;
+    }
+  }, 2000);
 }
-
-
 
 // ===== PARTICLE SYSTEM =====
 class Particle {
@@ -1088,47 +1147,49 @@ function drawDifficultyInfo() {
 function update() {
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   
-  // ===== MOVIMIENTO HORIZONTAL ESTILO DOODLE JUMP =====
+  // ===== SISTEMA DE MOVIMIENTO HORIZONTAL EQUILIBRADO =====
   {
     const w = canvas.clientWidth;
 
     if (IS_DESKTOP) {
-      // PC: seguir al mouse suavizado
+      // PC: seguir al mouse con suavizado natural
       const minCenter = PLAYER.w / 2;
       const maxCenter = w - PLAYER.w / 2;
       const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
-      smoothMouseX = smoothMouseX * 0.7 + clampedTarget * 0.3;
+      smoothMouseX = smoothMouseX * 0.8 + clampedTarget * 0.2;
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
-      // MÓVIL: Movimiento directo basado en inclinación
-      const baseSpeed = w * 0.016; // Velocidad base responsive al ancho de pantalla
-      const accelerationZone = 0.2; // Zona donde se aplica aceleración extra
+      // MÓVIL: Sistema equilibrado con múltiples mejoras
+      const baseSpeed = w * 0.012; // Velocidad base más conservadora
       
-      // Procesar input de inclinación
+      // Aplicar movimiento con curva de respuesta equilibrada
       let moveSpeed = tiltInput * baseSpeed;
       
-      // Acelerar movimiento para inclinaciones grandes
-      if (Math.abs(tiltInput) > accelerationZone) {
-        const extraSpeed = (Math.abs(tiltInput) - accelerationZone) * baseSpeed * 1.0;
-        moveSpeed += (tiltInput > 0 ? 1 : -1) * extraSpeed;
-      }
-   // Boost moderado para inclinaciones muy grandes
-      if (Math.abs(tiltInput) > 0.7) {
-        moveSpeed *= 1.15; // Solo 15% más velocidad (no 30%)
+      // Zona de aceleración progresiva
+      const absInput = Math.abs(tiltInput);
+      if (absInput > 0.4) {
+        // Aceleración suave para inclinaciones moderadas-altas
+        const extraMultiplier = 1 + (absInput - 0.4) * 0.8;
+        moveSpeed *= extraMultiplier;
       }
       
-      // Aplicar movimiento directo pero con micro-suavizado para estabilidad
-      const smoothingFactor = 0.85; // 85% movimiento directo, 15% suavizado
-      PLAYER.x += moveSpeed * smoothingFactor;
+      // Boost adicional para movimientos muy rápidos (solo en situaciones extremas)
+      if (absInput > 0.8) {
+        moveSpeed *= 1.1; // Solo 10% más velocidad para movimientos extremos
+      }
+      
+      // Aplicar movimiento con micro-suavizado para estabilidad
+      const currentX = PLAYER.x;
+      const targetXPos = currentX + moveSpeed;
+      
+      // Suavizado mínimo para eliminar jitter sin afectar respuesta
+      PLAYER.x = currentX * 0.15 + targetXPos * 0.85;
     }
 
     // ===== WRAP-AROUND COMPLETO =====
-    // Si el jugador sale completamente por la derecha, aparece por la izquierda
     if (PLAYER.x > w) {
       PLAYER.x = -PLAYER.w;
-    }
-    // Si el jugador sale completamente por la izquierda, aparece por la derecha  
-    else if (PLAYER.x + PLAYER.w < 0) {
+    } else if (PLAYER.x + PLAYER.w < 0) {
       PLAYER.x = w;
     }
   }
@@ -1181,11 +1242,17 @@ function startGame() {
 
   resizeCanvasToContainer();
 
-  // Solicitar permisos en iOS
+  // Solicitar permisos en iOS de forma más robusta
   if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    try { 
-      DeviceOrientationEvent.requestPermission().catch(()=>{}); 
-    } catch(_e) {}
+    DeviceOrientationEvent.requestPermission()
+      .then(response => {
+        if (response === 'granted') {
+          console.log('[iOS] Permisos de orientación concedidos');
+        }
+      })
+      .catch(error => {
+        console.warn('[iOS] No se pudieron obtener permisos de orientación:', error);
+      });
   }
 
   // Reset estado
@@ -1208,13 +1275,22 @@ function startGame() {
   const scoreElement = document.getElementById("score");
   if (scoreElement) scoreElement.innerText = "Score: 0";
 
-  // Reset sistema de inclinación
+  // Reset sistema de inclinación con estado limpio
   isCalibrated = false;
   tiltHistory = [];
   calibrationOffset = 0;
   tiltInput = 0;
+  lastTiltUpdate = 0;
+  
+  // Reset estado de movimiento
+  movementState = {
+    smoothedTilt: 0,
+    velocityBuffer: [],
+    lastRawTilt: 0,
+    stabilizationFrames: 0
+  };
 
-  // Posición inicial
+  // Posición inicial centrada
   PLAYER.x = c.clientWidth / 2 - PLAYER.w / 2;
   PLAYER.y = c.clientHeight - 100;
   PLAYER.dy = 0;
@@ -1367,28 +1443,48 @@ function setPaused(v) {
   }
 }
 
-// ===== INPUT HANDLING =====
+// ===== INPUT HANDLING MEJORADO =====
 if (IS_DESKTOP) {
+  // Mouse movement con mejor interpolación
   canvas.addEventListener("mousemove", (e) => {
     const rect = canvas.getBoundingClientRect();
     const newTarget = e.clientX - rect.left;
-    targetX = targetX * 0.7 + newTarget * 0.3;
+    // Interpolación más suave para desktop
+    targetX = targetX * 0.75 + newTarget * 0.25;
   });
 }
 
+// Sistema de disparo optimizado para móvil y desktop
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
+  e.preventDefault();
   const rect = canvas.getBoundingClientRect();
   shootBulletAtX(e.clientX - rect.left);
 });
 
+canvas.addEventListener("touchstart", (e) => {
+  if (!isGameRunning) return;
+  e.preventDefault(); // Prevenir zoom y otros comportamientos
+}, { passive: false });
+
 canvas.addEventListener("touchend", (e) => {
   if (!isGameRunning) return;
-  const rect = canvas.getBoundingClientRect();
-  const t = e.changedTouches[0];
-  shootBulletAtX(t.clientX - rect.left);
   e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  if (e.changedTouches.length > 0) {
+    const touch = e.changedTouches[0];
+    shootBulletAtX(touch.clientX - rect.left);
+  }
 }, { passive: false });
+
+// Prevenir comportamientos no deseados en móvil
+canvas.addEventListener("touchmove", (e) => {
+  e.preventDefault(); // Prevenir scroll de página
+}, { passive: false });
+
+canvas.addEventListener("contextmenu", (e) => {
+  e.preventDefault(); // Prevenir menú contextual
+});
 
 // ===== UI EVENT LISTENERS =====
 $pauseBtn?.addEventListener('click', () => setPaused(!isPaused));
@@ -1407,5 +1503,81 @@ document.getElementById('btn-back-menu')?.addEventListener('click', () => {
   if (homeScreen) homeScreen.classList.remove('hidden');
 });
 
+// ===== FUNCIONES DE UTILIDAD PARA DEBUGGING (SOLO EN DESARROLLO) =====
+function addDebugInfo() {
+  if (typeof console !== 'undefined' && IS_MOBILE) {
+    // Debug info cada 3 segundos solo en móvil
+    setInterval(() => {
+      if (isGameRunning) {
+        console.log(`[DEBUG] Tilt: ${tiltInput.toFixed(3)}, Calibrated: ${isCalibrated}, Player X: ${PLAYER.x.toFixed(1)}`);
+      }
+    }, 3000);
+  }
+}
+
+// Función para recalibrar manualmente (útil para testing)
+function forceRecalibration() {
+  if (IS_MOBILE) {
+    isCalibrated = false;
+    tiltHistory = [];
+    calibrationOffset = 0;
+    movementState = {
+      smoothedTilt: 0,
+      velocityBuffer: [],
+      lastRawTilt: 0,
+      stabilizationFrames: 0
+    };
+    console.log('[DEBUG] Recalibración forzada iniciada');
+  }
+}
+
+// ===== INICIALIZACIÓN Y EXPORTS =====
+// Inicializar debug info si estamos en desarrollo
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+  addDebugInfo();
+  // Exponer función de recalibración para debugging
+  window.forceRecalibration = forceRecalibration;
+}
+
+// Asegurar que el canvas tenga el foco correcto en móviles
+if (IS_MOBILE && canvas) {
+  canvas.setAttribute('tabindex', '0');
+  canvas.style.outline = 'none';
+}
+
+// Event listener para cuando la orientación cambie
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    resizeCanvasToContainer();
+    // Pequeño delay para recalibrar después de cambio de orientación
+    if (IS_MOBILE && isGameRunning) {
+      setTimeout(() => {
+        forceRecalibration();
+      }, 500);
+    }
+  }, 100);
+});
+
+// Event listener para cuando la aplicación regrese del background
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && IS_MOBILE && isGameRunning) {
+    // Recalibrar cuando la app regrese del background
+    setTimeout(() => {
+      forceRecalibration();
+    }, 200);
+  }
+});
+
 // ===== EXPORTS =====
 window.startGame = startGame;
+
+// Exportar funciones adicionales para debugging si es necesario
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+  window.gameDebug = {
+    getCurrentTilt: () => tiltInput,
+    isCalibrated: () => isCalibrated,
+    getCalibrationOffset: () => calibrationOffset,
+    getMovementState: () => ({ ...movementState }),
+    forceRecalibration: forceRecalibration
+  };
+}
