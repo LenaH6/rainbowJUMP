@@ -1,6 +1,6 @@
 // ===== GAME CORE =====
 const canvas = document.getElementById("gameCanvas");
-if (!canvas) { console.error("[RJ] #gameCanvas no está en el DOM"); }
+if (!canvas) { console.error("[GAME] #gameCanvas no está en el DOM"); }
 const ctx = canvas ? canvas.getContext("2d") : null;
 
 function resizeCanvasToContainer() {
@@ -18,7 +18,6 @@ function resizeCanvasToContainer() {
 window.addEventListener("resize", resizeCanvasToContainer);
 resizeCanvasToContainer();
 
-
 // ===== WORLD STATE =====
 let isGameRunning = false;
 let boosting = false;
@@ -28,18 +27,19 @@ let score = 0;
 let cameraY = 0;
 let prevPlayerY = 0;
 let gameStarted = false;
+
 // ===== PAUSE & CONTINUE STATE =====
 let isPaused = false;
 let isAwaitingContinue = false;
 let deathCount = 0;
 let continuePriceWLD = 0.11;
-let continueDeadline = 0;  // timestamp ms
+let continueDeadline = 0;
 let continueTimerId = null;
-// Sistema de cadenas (si aún no lo usas, igual decláralo para evitar errores)
+
+// Sistema de cadenas
 let breakableChain = [];
 let activeChainIndex = -1;
 let isChainActive = false;
-
 
 // Helper UI refs
 const $pauseBtn = document.getElementById('btn-pause');
@@ -52,12 +52,17 @@ const $pieLabel = document.getElementById('pie-label');
 const $finalScore = document.getElementById('final-score');
 const $finalCoins = document.getElementById('final-coins');
 
+// ===== PLAYER OBJECT =====
 const PLAYER = {
   x: 180,
   y: 600,
   w: 40,
   h: 40,
   dy: 0,
+  vx: 0, // Velocidad horizontal para móviles
+  // Propiedades visuales mejoradas
+  glowIntensity: 0,
+  trailParticles: []
 };
 
 // Configuración de física
@@ -71,7 +76,7 @@ let obstacles = [];
 let blackHoles = [];
 let boosters = [];
 let bullets = [];
-
+let particles = []; // Para efectos visuales
 
 // Configuraciones
 const BASE_PLATFORM_W = 90;
@@ -102,63 +107,126 @@ const BOOSTER_TYPES = {
 };
 
 // ===== IMPROVED MOBILE MOVEMENT =====
-let mouseX = 200, targetX = 200, smoothMouseX = 200; // se corrigen en startGame()
-// Input normalizado de inclinación (-1..1). Usado SOLO en móvil.
+let mouseX = 200, targetX = 200, smoothMouseX = 200;
 let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
 
-// Sistema de calibración automática para inclinación
+// Sistema de calibración automática mejorado
 let tiltHistory = [];
-const TILT_HISTORY_SIZE = 10;
+const TILT_HISTORY_SIZE = 20;
+let rawTiltValue = 0;
+let filteredTilt = 0;
+let tiltFilter = 0;
+const TILT_FILTER_STRENGTH = 0.15;
 
-  if (window.DeviceOrientationEvent) {
+// Detección de dispositivo mejorada
+const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const IS_DESKTOP = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+
+if (window.DeviceOrientationEvent && IS_MOBILE) {
   window.addEventListener("deviceorientation", (e) => {
     const rawGamma = e.gamma ?? 0;
+    rawTiltValue = rawGamma;
 
-    // auto-calibración (usa tus mismas variables)
+    // Auto-calibración mejorada
     if (!isCalibrated) {
       tiltHistory.push(rawGamma);
       if (tiltHistory.length >= TILT_HISTORY_SIZE) {
-        calibrationOffset = tiltHistory.reduce((a,b)=>a+b,0) / tiltHistory.length;
+        const sortedHistory = [...tiltHistory].sort((a, b) => a - b);
+        calibrationOffset = sortedHistory[Math.floor(sortedHistory.length / 2)];
         isCalibrated = true;
+        console.log('[TILT] Calibrado en:', calibrationOffset.toFixed(2));
       }
       return;
     }
 
-    // curva rápida y con poca latencia
-    const gamma = rawGamma - calibrationOffset; // grados
-    const deadzone = 1;
-    const maxTilt  = 20;
-    let g = Math.abs(gamma) < deadzone ? 0 : gamma;
-    g = Math.max(-maxTilt, Math.min(maxTilt, g));
-    let ratio = g / maxTilt;                    // -1..1
-    const sgn = ratio >= 0 ? 1 : -1;
-    ratio = sgn * Math.pow(Math.abs(ratio), 0.8);
+    // Aplicar calibración
+    const gamma = rawGamma - calibrationOffset;
+    
+    // Filtro de paso bajo
+    tiltFilter = tiltFilter * (1 - TILT_FILTER_STRENGTH) + gamma * TILT_FILTER_STRENGTH;
+    filteredTilt = tiltFilter;
 
-    // guardamos input de tilt para la física
+    // Configuración de sensibilidad
+    const deadzone = 0.5;
+    const maxTilt = 25;
+    
+    let processedTilt = Math.abs(filteredTilt) < deadzone ? 0 : filteredTilt;
+    processedTilt = Math.max(-maxTilt, Math.min(maxTilt, processedTilt));
+    
+    let ratio = processedTilt / maxTilt;
+    const sign = ratio >= 0 ? 1 : -1;
+    ratio = sign * Math.pow(Math.abs(ratio), 0.6);
+    
     tiltInput = Math.max(-1, Math.min(1, ratio));
-  });
+  }, { passive: true });
 }
 
-
-// Botón de recalibración para depuración
+// Función de recalibración mejorada
 window.recalibrateTilt = function() {
   isCalibrated = false;
   tiltHistory = [];
   calibrationOffset = 0;
+  tiltFilter = 0;
+  console.log('[TILT] Recalibrando...');
 };
+
+// ===== PARTICLE SYSTEM =====
+class Particle {
+  constructor(x, y, vx, vy, color, life, size = 2) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.life = life;
+    this.maxLife = life;
+    this.size = size;
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.1; // Pequeña gravedad
+    this.life--;
+    this.vx *= 0.99; // Fricción
+  }
+  
+  draw(ctx) {
+    const alpha = this.life / this.maxLife;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  
+  isDead() {
+    return this.life <= 0;
+  }
+}
+
+function addParticles(x, y, count, color) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count;
+    const speed = 2 + Math.random() * 3;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed - 2;
+    particles.push(new Particle(x, y, vx, vy, color, 30 + Math.random() * 20));
+  }
+}
+
 // ===== PROGRESSIVE DIFFICULTY SYSTEM =====
 function getDifficulty() {
-  // Progresión muy gradual cada 200 puntos (más frecuente)
   const rawLevel = score / 200;
   const level = Math.floor(rawLevel);
-  const progress = rawLevel - level; // 0 to 1 dentro del nivel
+  const progress = rawLevel - level;
   
-  // Interpolación suave entre niveles
   const lerp = (start, end, t) => start + (end - start) * Math.min(1, t);
   
-  // Configuración base (nivel 0)
   const base = {
     gapMin: 120,
     gapMax: 190,
@@ -173,7 +241,6 @@ function getDifficulty() {
     complexPatternProb: 0.05
   };
   
-  // Cambios por nivel (más agresivos para mayor dificultad)
   const perLevel = {
     gapMin: -3,
     gapMax: -4,
@@ -188,7 +255,6 @@ function getDifficulty() {
     complexPatternProb: 0.04
   };
   
-  // Calcular valores actuales con interpolación suave
   const current = {};
   for (const key in base) {
     const levelValue = base[key] + (perLevel[key] * level);
@@ -212,14 +278,14 @@ function getDifficulty() {
   return { level, progress, ...current };
 }
 
-// ===== INTELLIGENT PLATFORM PATTERNS =====
+// ===== PLATFORM GENERATION =====
 function createInitialPlatforms() {
   platforms = [];
   obstacles = [];
   blackHoles = [];
   boosters = [];
+  particles = [];
   
-  // Resetear sistema de cadenas
   breakableChain = [];
   activeChainIndex = -1;
   isChainActive = false;
@@ -241,7 +307,6 @@ function spawnComplexPattern(y, difficulty) {
   const cw = canvas.clientWidth;
   const w = difficulty.width;
   
-  // Patrones más complejos y desafiantes
   const patterns = [
     // Patrón: Zigzag de plataformas móviles
     () => {
@@ -269,14 +334,13 @@ function spawnComplexPattern(y, difficulty) {
         x: altX, y: y - 20, w: w, h: PLATFORM_H,
         type: PLATFORM_TYPES.NORMAL, vx: 0, vy: 0, baseY: y - 20
       });
-      // Añadir obstáculo en la transparente
       obstacles.push({
         x: mainX + w/2 - 15, y: y - 35, w: 30, h: 30,
         lives: 1, maxLives: 1, vx: 0
       });
     },
     
-    // Patrón: Escalera ascendente con diferentes tipos
+    // Patrón: Escalera ascendente
     () => {
       const types = [PLATFORM_TYPES.NORMAL, PLATFORM_TYPES.GREAT_JUMP, PLATFORM_TYPES.MOVING_HORIZONTAL];
       for (let i = 0; i < 4; i++) {
@@ -292,57 +356,22 @@ function spawnComplexPattern(y, difficulty) {
       }
     },
     
-    // Patrón: Doble vertical con obstáculos móviles
-    () => {
-      platforms.push({
-        x: cw * 0.2, y: y, w: w, h: PLATFORM_H,
-        type: PLATFORM_TYPES.MOVING_VERTICAL,
-        vx: 0, vy: difficulty.speed * 0.8, baseY: y
-      });
-      platforms.push({
-        x: cw * 0.8 - w, y: y, w: w, h: PLATFORM_H,
-        type: PLATFORM_TYPES.MOVING_VERTICAL,
-        vx: 0, vy: -difficulty.speed * 0.8, baseY: y
-      });
-      // Obstáculos móviles entre ellas
-      obstacles.push({
-        x: cw * 0.5 - 15, y: y - 40, w: 30, h: 30,
-        lives: 2, maxLives: 2, vx: difficulty.speed * 1.5
-      });
-    },
-    
     // Patrón: Super jump con landing challenge
     () => {
       platforms.push({
         x: cw * 0.15, y: y, w: w * 0.7, h: PLATFORM_H,
         type: PLATFORM_TYPES.SUPER_JUMP, vx: 0, vy: 0, baseY: y
       });
-      // Plataforma de aterrizaje lejana y pequeña
       platforms.push({
         x: cw * 0.8, y: y - 60, w: w * 0.6, h: PLATFORM_H,
         type: PLATFORM_TYPES.NORMAL, vx: 0, vy: 0, baseY: y - 60
       });
-      // Agujero negro entre ellas
       blackHoles.push({
         x: cw * 0.5, y: y - 30, radius: 18, pullRadius: 50, rotation: 0
       });
-    },
-    
-    // Patrón: Laberinto de plataformas rotas
-    () => {
-      for (let i = 0; i < 5; i++) {
-        const x = 20 + Math.random() * (cw - w - 40);
-        const platformY = y - (i * 18);
-        platforms.push({
-          x: x, y: platformY, w: w * 0.6, h: PLATFORM_H,
-          type: PLATFORM_TYPES.BREAKABLE,
-          vx: 0, vy: 0, baseY: platformY, health: 1
-        });
-      }
     }
   ];
   
-  // Elegir patrón basado en dificultad con mayor variedad
   const maxPatterns = Math.min(patterns.length, 3 + Math.floor(difficulty.level / 2));
   const availablePatterns = patterns.slice(0, maxPatterns);
   const pattern = availablePatterns[Math.floor(Math.random() * availablePatterns.length)];
@@ -355,20 +384,17 @@ function spawnPlatformAt(y, widthOpt) {
   const difficulty = getDifficulty();
   const cw = canvas.clientWidth;
   
-  // Decidir si usar patrón complejo (más frecuente en niveles altos)
   if (Math.random() < difficulty.complexPatternProb) {
     spawnComplexPattern(y, difficulty);
     return;
   }
   
-  // Plataforma simple
   const w = widthOpt || difficulty.width;
   let x = Math.random() * (cw - w);
   
   let type = PLATFORM_TYPES.NORMAL;
   let vx = 0, vy = 0;
   
-  // Determinar tipo con mayor variedad
   if (Math.random() < difficulty.moveProb) {
     if (Math.random() < difficulty.verticalMoveProb) {
       type = PLATFORM_TYPES.MOVING_VERTICAL;
@@ -387,7 +413,6 @@ function spawnPlatformAt(y, widthOpt) {
     ];
     type = specialTypes[Math.floor(Math.random() * specialTypes.length)];
     
-    // Si es transparente, añadir plataforma alternativa
     if (type === PLATFORM_TYPES.TRANSPARENT) {
       const altX = x > cw/2 ? 30 : cw - w - 30;
       platforms.push({
@@ -402,7 +427,7 @@ function spawnPlatformAt(y, widthOpt) {
     health: type === PLATFORM_TYPES.BREAKABLE ? 1 : -1 
   });
   
-  // Spawns adicionales más frecuentes
+  // Spawns adicionales
   if (Math.random() < difficulty.obstacleProb) {
     spawnObstacle(y - rand(30, 60));
   }
@@ -474,22 +499,14 @@ function rand(min, max) {
 
 // ===== UPDATE LOGIC =====
 function updatePlayer() {
-  // Movimiento horizontal ultra-fluido
-  const lerpSpeed = 0.25; // Muy responsivo
-  smoothMouseX = smoothMouseX + (targetX - smoothMouseX) * lerpSpeed;
+  // Actualizar efectos visuales
+  PLAYER.glowIntensity = boosting ? Math.sin(Date.now() * 0.01) * 0.5 + 0.5 : 0;
   
-  const cw = canvas.clientWidth;
-  const currentCenter = PLAYER.x + PLAYER.w / 2;
-  const targetCenter = smoothMouseX;
-  
-  // Movimiento más natural
-  PLAYER.x += (targetCenter - currentCenter) * 0.3;
-  
-  // Wrap mejorado - sin paredes invisibles
-  if (PLAYER.x + PLAYER.w < 0) {
-    PLAYER.x = cw;
-  } else if (PLAYER.x > cw) {
-    PLAYER.x = -PLAYER.w;
+  // Trail de partículas cuando está boosting
+  if (boosting && Math.random() < 0.3) {
+    const trailX = PLAYER.x + PLAYER.w/2 + (Math.random() - 0.5) * PLAYER.w;
+    const trailY = PLAYER.y + PLAYER.h;
+    particles.push(new Particle(trailX, trailY, 0, 2, '#5b8cff', 20, 1));
   }
   
   // Física vertical
@@ -521,15 +538,14 @@ function updateCamera() {
       for (const bh of blackHoles) bh.y += delta;
       for (const bs of boosters) bs.y += delta;
       for (const b of bullets) b.y += delta;
+      for (const particle of particles) particle.y += delta;
       
       cameraY += delta;
       
-      // Actualizar score correctamente
       if (gameStarted) {
-        const newScore = Math.floor(cameraY / 5); // Más granular
+        const newScore = Math.floor(cameraY / 5);
         if (newScore > score) {
           score = newScore;
-          // Actualizar UI si existe
           const scoreElement = document.getElementById("score");
           if (scoreElement) {
             scoreElement.innerText = "Score: " + score;
@@ -552,10 +568,9 @@ function updatePlatforms() {
       }
     }
     
-    // Movimiento vertical (oscilación)
+    // Movimiento vertical
     if (p.vy) {
       p.y += p.vy;
-      // Oscilar arriba y abajo desde posición base
       if (Math.abs(p.y - p.baseY) > 35) {
         p.vy *= -1;
       }
@@ -581,7 +596,9 @@ function updatePlatforms() {
           
           PLAYER.y = p.y - PLAYER.h;
           
-          // Detectar botón
+          // Efectos de aterrizaje
+          addParticles(PLAYER.x + PLAYER.w/2, p.y, 3, '#40b66b');
+          
           const playerCenter = PLAYER.x + PLAYER.w / 2;
           const platformRight = p.x + p.w;
           const buttonZone = platformRight - 15;
@@ -590,16 +607,20 @@ function updatePlatforms() {
           switch (p.type) {
             case PLATFORM_TYPES.SUPER_JUMP:
               PLAYER.dy = touchedButton ? jumpStrength * 2.2 : jumpStrength;
+              if (touchedButton) addParticles(PLAYER.x + PLAYER.w/2, PLAYER.y, 8, '#ff1493');
               break;
             case PLATFORM_TYPES.GREAT_JUMP:
               PLAYER.dy = touchedButton ? jumpStrength * 1.6 : jumpStrength;
+              if (touchedButton) addParticles(PLAYER.x + PLAYER.w/2, PLAYER.y, 6, '#ff69b4');
               break;
             case PLATFORM_TYPES.MINI_JUMP:
               PLAYER.dy = touchedButton ? jumpStrength * 0.6 : jumpStrength;
+              if (touchedButton) addParticles(PLAYER.x + PLAYER.w/2, PLAYER.y, 4, '#87ceeb');
               break;
             case PLATFORM_TYPES.BREAKABLE:
               PLAYER.dy = jumpStrength;
               p.health--;
+              addParticles(PLAYER.x + PLAYER.w/2, p.y, 5, '#8b4513');
               if (p.health <= 0) {
                 platforms.splice(platforms.indexOf(p), 1);
               }
@@ -625,7 +646,7 @@ function updateObstacles() {
       }
     }
     
-    // NUEVA FUNCIONALIDAD: Matar obstáculos pisándolos desde arriba
+    // Matar obstáculos pisándolos desde arriba
     const playerBottom = PLAYER.y + PLAYER.h;
     const playerTop = PLAYER.y;
     const playerLeft = PLAYER.x;
@@ -636,23 +657,21 @@ function updateObstacles() {
     const obstacleLeft = o.x;
     const obstacleRight = o.x + o.w;
     
-    // Verificar si el jugador está cayendo sobre el obstáculo
-    if (PLAYER.dy > 0 && // Cayendo
-        prevPlayerY + PLAYER.h <= obstacleTop && // Estaba arriba en el frame anterior
-        playerBottom >= obstacleTop && // Ahora está tocando la parte superior
-        playerRight > obstacleLeft && // Overlap horizontal
+    if (PLAYER.dy > 0 && 
+        prevPlayerY + PLAYER.h <= obstacleTop && 
+        playerBottom >= obstacleTop && 
+        playerRight > obstacleLeft && 
         playerLeft < obstacleRight) {
       
-      // Matar el obstáculo instantáneamente
+      // Efectos de destrucción
+      addParticles(o.x + o.w/2, o.y, 8, '#ff4757');
       obstacles.splice(i, 1);
-      
-      // Dar impulso de salto alto como recompensa
       PLAYER.dy = jumpStrength * 1.5;
-      PLAYER.y = obstacleTop - PLAYER.h; // Posicionar correctamente
-      continue; // Saltar al siguiente obstáculo
+      PLAYER.y = obstacleTop - PLAYER.h;
+      continue;
     }
     
-    // Colisión normal (lateral o por abajo)
+    // Colisión normal
     if (playerLeft < obstacleRight && 
         playerRight > obstacleLeft &&
         playerTop < obstacleBottom && 
@@ -668,7 +687,9 @@ function updateObstacles() {
           b.y > obstacleTop - 5 && b.y < obstacleBottom + 5) {
         bullets.splice(j, 1);
         o.lives--;
+        addParticles(b.x, b.y, 4, '#e74c3c');
         if (o.lives <= 0) {
+          addParticles(o.x + o.w/2, o.y + o.h/2, 10, '#ff4757');
           obstacles.splice(i, 1);
           break;
         }
@@ -694,6 +715,15 @@ function updateBlackHoles() {
       
       PLAYER.x += Math.cos(angle) * pullStrength;
       PLAYER.y += Math.sin(angle) * pullStrength;
+      
+      // Efectos visuales de succión
+      if (Math.random() < 0.4) {
+        const suckX = playerCenterX + (Math.random() - 0.5) * 40;
+        const suckY = playerCenterY + (Math.random() - 0.5) * 40;
+        particles.push(new Particle(suckX, suckY, 
+          (bh.x - suckX) * 0.1, (bh.y - suckY) * 0.1, 
+          '#16213e', 15, 1));
+      }
     }
     
     if (distance < bh.radius) {
@@ -715,6 +745,9 @@ function updateBoosters() {
         PLAYER.x + PLAYER.w > bs.x &&
         PLAYER.y < bs.y + bs.h && 
         PLAYER.y + PLAYER.h > bs.y) {
+      
+      // Efectos visuales de booster
+      addParticles(bs.x + bs.w/2, bs.y + bs.h/2, 12, bs.type === BOOSTER_TYPES.SHORT ? '#2ecc71' : '#3498db');
       
       if (bs.type === BOOSTER_TYPES.SHORT) {
         boosting = true;
@@ -750,6 +783,15 @@ function updateBullets() {
   );
 }
 
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update();
+    if (particles[i].isDead()) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
 function cleanupElements() {
   const screenBottom = canvas.clientHeight + 100;
   platforms = platforms.filter(p => p.y < screenBottom);
@@ -758,63 +800,149 @@ function cleanupElements() {
   boosters = boosters.filter(bs => bs.y < screenBottom);
 }
 
-// ===== DRAWING =====
+// ===== ENHANCED DRAWING =====
 function drawPlayer() {
-  ctx.fillStyle = "#5b8cff";
+  const centerX = PLAYER.x + PLAYER.w / 2;
+  const centerY = PLAYER.y + PLAYER.h / 2;
+  
+  // Glow effect cuando está boosting
+  if (boosting || PLAYER.glowIntensity > 0) {
+    const glowSize = PLAYER.w + (PLAYER.glowIntensity * 10);
+    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowSize);
+    gradient.addColorStop(0, `rgba(91, 140, 255, ${0.3 + PLAYER.glowIntensity * 0.4})`);
+    gradient.addColorStop(1, 'rgba(91, 140, 255, 0)');
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, glowSize, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Cuerpo principal con gradiente
+  const bodyGradient = ctx.createLinearGradient(PLAYER.x, PLAYER.y, PLAYER.x, PLAYER.y + PLAYER.h);
+  bodyGradient.addColorStop(0, '#7ba3ff');
+  bodyGradient.addColorStop(1, '#4a75ff');
+  
+  ctx.fillStyle = bodyGradient;
   ctx.fillRect(PLAYER.x, PLAYER.y, PLAYER.w, PLAYER.h);
+  
+  // Highlight superior
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.fillRect(PLAYER.x + 2, PLAYER.y + 2, PLAYER.w - 4, 8);
+  
+  // Borde sutil
+  ctx.strokeStyle = '#2c5aa0';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(PLAYER.x, PLAYER.y, PLAYER.w, PLAYER.h);
 }
 
 function drawPlatforms() {
   for (const p of platforms) {
+    let gradient;
+    
     switch (p.type) {
       case PLATFORM_TYPES.MOVING_HORIZONTAL:
-        ctx.fillStyle = "#ffa500";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#ffb347');
+        gradient.addColorStop(1, '#ff8c00');
         break;
       case PLATFORM_TYPES.MOVING_VERTICAL:
-        ctx.fillStyle = "#ff8c42";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#ff9f5a');
+        gradient.addColorStop(1, '#ff7527');
         break;
       case PLATFORM_TYPES.BREAKABLE:
-        ctx.fillStyle = "#8b4513";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#a0522d');
+        gradient.addColorStop(1, '#6b3410');
         break;
       case PLATFORM_TYPES.TRANSPARENT:
         ctx.fillStyle = "rgba(64, 182, 107, 0.4)";
-        break;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        // Borde punteado
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = "#40b66b";
+        ctx.strokeRect(p.x, p.y, p.w, p.h);
+        ctx.setLineDash([]);
+        continue;
       case PLATFORM_TYPES.SUPER_JUMP:
-        ctx.fillStyle = "#ff1493";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#ff69b4');
+        gradient.addColorStop(1, '#dc143c');
         break;
       case PLATFORM_TYPES.GREAT_JUMP:
-        ctx.fillStyle = "#ff69b4";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#ff8fa3');
+        gradient.addColorStop(1, '#ff1493');
         break;
       case PLATFORM_TYPES.MINI_JUMP:
-        ctx.fillStyle = "#87ceeb";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#b0e0e6');
+        gradient.addColorStop(1, '#4682b4');
         break;
       default:
-        ctx.fillStyle = "#40b66b";
+        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        gradient.addColorStop(0, '#5fbf73');
+        gradient.addColorStop(1, '#2e7d32');
     }
+    
+    ctx.fillStyle = gradient;
     ctx.fillRect(p.x, p.y, p.w, p.h);
     
-    // Dibujar botones
+    // Highlight superior
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(p.x, p.y, p.w, 2);
+    
+    // Dibujar botones con animación
     if (p.type === PLATFORM_TYPES.SUPER_JUMP || 
         p.type === PLATFORM_TYPES.GREAT_JUMP || 
         p.type === PLATFORM_TYPES.MINI_JUMP) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+      
+      const pulse = Math.sin(Date.now() * 0.008) * 0.2 + 0.8;
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.9 * pulse})`;
+      
       const buttonSize = p.type === PLATFORM_TYPES.SUPER_JUMP ? 10 : 
                         p.type === PLATFORM_TYPES.GREAT_JUMP ? 8 : 6;
+      
       ctx.fillRect(p.x + p.w - buttonSize - 2, p.y - buttonSize, buttonSize, buttonSize);
+      
+      // Borde del botón
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(p.x + p.w - buttonSize - 2, p.y - buttonSize, buttonSize, buttonSize);
     }
   }
 }
 
 function drawObstacles() {
   for (const o of obstacles) {
-    if (o.lives === 1) ctx.fillStyle = "#ff4757";
-    else ctx.fillStyle = "#ff6348";
+    let gradient;
     
+    if (o.lives === 1) {
+      gradient = ctx.createRadialGradient(o.x + o.w/2, o.y + o.h/2, 0, o.x + o.w/2, o.y + o.h/2, o.w/2);
+      gradient.addColorStop(0, '#ff6b7a');
+      gradient.addColorStop(1, '#ff3742');
+    } else {
+      gradient = ctx.createRadialGradient(o.x + o.w/2, o.y + o.h/2, 0, o.x + o.w/2, o.y + o.h/2, o.w/2);
+      gradient.addColorStop(0, '#ff7f7f');
+      gradient.addColorStop(1, '#ff4757');
+    }
+    
+    ctx.fillStyle = gradient;
     ctx.fillRect(o.x, o.y, o.w, o.h);
     
-    ctx.fillStyle = "white";
-    ctx.font = "14px Arial";
+    // Borde
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(o.x, o.y, o.w, o.h);
+    
+    // Texto de vidas con sombra
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.font = "bold 14px Arial";
     ctx.textAlign = "center";
+    ctx.fillText(o.lives.toString(), o.x + o.w/2 + 1, o.y + o.h/2 + 6);
+    
+    ctx.fillStyle = "white";
     ctx.fillText(o.lives.toString(), o.x + o.w/2, o.y + o.h/2 + 5);
   }
 }
@@ -825,20 +953,33 @@ function drawBlackHoles() {
     ctx.translate(bh.x, bh.y);
     ctx.rotate(bh.rotation);
     
-    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, bh.radius);
-    gradient.addColorStop(0, "#000000");
-    gradient.addColorStop(0.6, "#1a1a2e");
-    gradient.addColorStop(1, "#16213e");
+    // Múltiples capas para efecto más realista
+    const layers = [
+      { radius: bh.radius * 1.2, color: '#0f0f23', alpha: 0.3 },
+      { radius: bh.radius, color: '#1a1a2e', alpha: 0.8 },
+      { radius: bh.radius * 0.6, color: '#000000', alpha: 1 }
+    ];
     
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(0, 0, bh.radius, 0, Math.PI * 2);
-    ctx.fill();
+    layers.forEach(layer => {
+      const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, layer.radius);
+      gradient.addColorStop(0, layer.color);
+      gradient.addColorStop(1, 'transparent');
+      
+      ctx.fillStyle = gradient;
+      ctx.globalAlpha = layer.alpha;
+      ctx.beginPath();
+      ctx.arc(0, 0, layer.radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
     
-    ctx.strokeStyle = "rgba(22, 33, 62, 0.3)";
-    ctx.lineWidth = 1;
+    ctx.globalAlpha = 1;
+    
+    // Anillo de succión animado
+    ctx.strokeStyle = "rgba(100, 149, 237, 0.4)";
+    ctx.lineWidth = 2;
+    const pulseRadius = bh.pullRadius + Math.sin(Date.now() * 0.01) * 5;
     ctx.beginPath();
-    ctx.arc(0, 0, bh.pullRadius, 0, Math.PI * 2);
+    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
     ctx.stroke();
     
     ctx.restore();
@@ -849,101 +990,154 @@ function drawBoosters() {
   for (const bs of boosters) {
     const y = bs.y + Math.sin(bs.bobOffset) * 2;
     
+    let gradient;
     if (bs.type === BOOSTER_TYPES.SHORT) {
-      ctx.fillStyle = "#2ecc71";
+      gradient = ctx.createRadialGradient(bs.x + bs.w/2, y + bs.h/2, 0, bs.x + bs.w/2, y + bs.h/2, bs.w/2);
+      gradient.addColorStop(0, '#58d68d');
+      gradient.addColorStop(1, '#27ae60');
     } else {
-      ctx.fillStyle = "#3498db";
+      gradient = ctx.createRadialGradient(bs.x + bs.w/2, y + bs.h/2, 0, bs.x + bs.w/2, y + bs.h/2, bs.w/2);
+      gradient.addColorStop(0, '#5dade2');
+      gradient.addColorStop(1, '#3498db');
     }
     
+    ctx.fillStyle = gradient;
     ctx.fillRect(bs.x, y, bs.w, bs.h);
     
-    ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+    // Efecto de pulso
+    const pulse = Math.sin(bs.bobOffset * 2) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.4 * pulse})`;
     ctx.fillRect(bs.x + 3, y + 3, bs.w - 6, bs.h - 6);
+    
+    // Borde brillante
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 * pulse})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bs.x, y, bs.w, bs.h);
   }
 }
 
 function drawBullets() {
-  ctx.fillStyle = "#e74c3c";
   for (const b of bullets) {
+    // Bullet con trail
+    const gradient = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, 6);
+    gradient.addColorStop(0, '#ff6b6b');
+    gradient.addColorStop(0.7, '#e74c3c');
+    gradient.addColorStop(1, 'transparent');
+    
+    ctx.fillStyle = gradient;
     ctx.beginPath();
     ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Core brillante
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
+function drawParticles() {
+  particles.forEach(particle => particle.draw(ctx));
+}
+
 function drawDifficultyInfo() {
   const difficulty = getDifficulty();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-  ctx.font = "14px Arial";
+  
+  // Fondo semitransparente para la UI
+  ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+  ctx.fillRect(5, canvas.clientHeight - 80, 200, 75);
+  
+  ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.font = "bold 16px Arial";
   ctx.textAlign = "left";
   
-  // Información más detallada
   const progressPercent = Math.floor(difficulty.progress * 100);
-  ctx.fillText(`Nivel: ${difficulty.level} (${progressPercent}%)`, 10, canvas.clientHeight - 50);
-  ctx.fillText(`Score: ${score}`, 10, canvas.clientHeight - 30);
+  ctx.fillText(`Nivel: ${difficulty.level}`, 10, canvas.clientHeight - 55);
+  ctx.fillText(`Score: ${score}`, 10, canvas.clientHeight - 35);
   
-  // Barra de progreso visual
-  const barWidth = 150;
-  const barHeight = 8;
+  // Barra de progreso mejorada
+  const barWidth = 180;
+  const barHeight = 12;
   const barX = 10;
-  const barY = canvas.clientHeight - 15;
+  const barY = canvas.clientHeight - 20;
   
   // Fondo de la barra
-  ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
   ctx.fillRect(barX, barY, barWidth, barHeight);
   
-  // Progreso de la barra
-  ctx.fillStyle = "#3498db";
+  // Progreso con gradiente
+  const progressGradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+  progressGradient.addColorStop(0, '#3498db');
+  progressGradient.addColorStop(0.5, '#2ecc71');
+  progressGradient.addColorStop(1, '#e74c3c');
+  
+  ctx.fillStyle = progressGradient;
   ctx.fillRect(barX, barY, barWidth * difficulty.progress, barHeight);
+  
+  // Borde de la barra
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barWidth, barHeight);
+  
+  // Texto del progreso
+  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.font = "10px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText(`${progressPercent}%`, barX + barWidth/2, barY + 8);
 }
 
 // ===== MAIN UPDATE LOOP =====
 function update() {
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-// ===== MOVIMIENTO HORIZONTAL (tilt o mouse) =====
-{
-  const w = canvas.clientWidth;
+  
+  // ===== MOVIMIENTO HORIZONTAL MEJORADO =====
+  {
+    const w = canvas.clientWidth;
 
-  // En PC: seguir al mouse suavizado (lo ya existente)
-  if (IS_DESKTOP) {
-    const minCenter = PLAYER.w / 2;
-    const maxCenter = w - PLAYER.w / 2;
-    const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
-    smoothMouseX = smoothMouseX * 0.85 + clampedTarget * 0.15;
-    PLAYER.x = smoothMouseX - PLAYER.w / 2;
-  } else {
-    // En móvil: física con inclinación (rápida y fluida)
-    // Acel. proporcional al ancho: más grande → más “road”
-    const accel = 0.0035 * w;   // sensibilidad (sube/baja si quieres)
-    const friction = 0.88;      // 0.85 más suelto / 0.93 más pegado
+    if (IS_DESKTOP) {
+      // PC: seguir al mouse suavizado
+      const minCenter = PLAYER.w / 2;
+      const maxCenter = w - PLAYER.w / 2;
+      const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
+      smoothMouseX = smoothMouseX * 0.85 + clampedTarget * 0.15;
+      PLAYER.x = smoothMouseX - PLAYER.w / 2;
+    } else {
+      // Móvil: física con inclinación mejorada
+      const baseAccel = w * 0.004;
+      const maxSpeed = w * 0.015;
+      const friction = 0.92;
+      
+      const tiltIntensity = Math.abs(tiltInput);
+      const accelMultiplier = 0.5 + (tiltIntensity * 1.5);
+      const currentAccel = baseAccel * accelMultiplier;
+      
+      PLAYER.vx += currentAccel * tiltInput;
+      
+      const currentMaxSpeed = maxSpeed * (0.7 + tiltIntensity * 0.6);
+      PLAYER.vx = Math.max(-currentMaxSpeed, Math.min(currentMaxSpeed, PLAYER.vx));
+      
+      PLAYER.vx *= friction;
+      PLAYER.x += PLAYER.vx;
+    }
 
-    // Asegúrate de tener vx en tu PLAYER
-    if (typeof PLAYER.vx !== 'number') PLAYER.vx = 0;
-
-    // aplica aceleración por tilt
-    PLAYER.vx += accel * tiltInput;
-    PLAYER.vx *= friction;
-
-    // avanza
-    PLAYER.x += PLAYER.vx;
+    // Wrap-around mejorado
+    const wrapMargin = PLAYER.w * 0.1;
+    
+    if (PLAYER.x + PLAYER.w < -wrapMargin) {
+      PLAYER.x = w + wrapMargin;
+    } else if (PLAYER.x > w + wrapMargin) {
+      PLAYER.x = -PLAYER.w - wrapMargin;
+    }
   }
 
-  // ===== WRAP-AROUND (sin paredes) =====
-  if (PLAYER.x > w) {
-    PLAYER.x = -PLAYER.w + 1;
-  } else if (PLAYER.x + PLAYER.w < 0) {
-    PLAYER.x = w - 1;
+  // Pausa - solo mantener overlay visible
+  if (isPaused || isAwaitingContinue) {
+    if (isGameRunning) requestAnimationFrame(update);
+    return;
   }
-}
 
-  // Pausa dura: no avanzar simulación, solo mantener overlay visible
-if (isPaused || isAwaitingContinue){
-  // Dibuja elementos mínimos si quieres (opcional)
-  // No avanza física ni spawns
-  if (isGameRunning) requestAnimationFrame(update);
-  return;
-}
-
+  // Updates del juego
   updatePlayer();
   updateCamera();
   updatePlatforms();
@@ -951,45 +1145,48 @@ if (isPaused || isAwaitingContinue){
   updateBlackHoles();
   updateBoosters();
   updateBullets();
+  updateParticles();
   cleanupElements();
   
- if (PLAYER.y > canvas.clientHeight + 60) {
-  onPlayerDeath('fall');
-  return;
-}
-
+  // Verificar caída
+  if (PLAYER.y > canvas.clientHeight + 60) {
+    onPlayerDeath('fall');
+    return;
+  }
   
-  // Drawing
+  // Drawing con efectos mejorados
   drawPlayer();
   drawPlatforms();
   drawObstacles();
   drawBlackHoles();
   drawBoosters();
   drawBullets();
+  drawParticles();
   drawDifficultyInfo();
   
   prevPlayerY = PLAYER.y;
   if (isGameRunning) requestAnimationFrame(update);
 }
 
-// ===== GAME START/END =====
+// ===== GAME MANAGEMENT =====
 function startGame() {
-  // Tomar referencias locales y validar
   const c = canvas;
   const context = ctx;
   if (!c || !context) {
-    console.error('[RJ] Canvas no disponible al iniciar');
+    console.error('[GAME] Canvas no disponible al iniciar');
     return;
   }
 
-  // Ajustar dimensiones HiDPI ahora que el canvas existe
   resizeCanvasToContainer();
-// iOS pide permiso explícito para deviceorientation
-if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-  try { DeviceOrientationEvent.requestPermission().catch(()=>{}); } catch(_e) {}
-}
 
-  // ===== Reset de continues WLD por partida =====
+  // Solicitar permisos en iOS
+  if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try { 
+      DeviceOrientationEvent.requestPermission().catch(()=>{}); 
+    } catch(_e) {}
+  }
+
+  // Reset estado
   deathCount = 0;
   continuePriceWLD = 0.11;
   isPaused = false;
@@ -998,7 +1195,6 @@ if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermis
   $overlayContinue?.classList.add('hidden');
   $overlayGameOver?.classList.add('hidden');
 
-  // ===== Estado base del juego =====
   isGameRunning = true;
   boosting = true;
   initialBoost = true;
@@ -1007,7 +1203,6 @@ if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermis
   cameraY = 0;
   gameStarted = false;
 
-  // UI score
   const scoreElement = document.getElementById("score");
   if (scoreElement) scoreElement.innerText = "Score: 0";
 
@@ -1015,23 +1210,25 @@ if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermis
   isCalibrated = false;
   tiltHistory = [];
   calibrationOffset = 0;
+  tiltFilter = 0;
+  PLAYER.vx = 0;
 
-  // Posición inicial del jugador (USAR 'c', NO 'canvas')
-  PLAYER.x = c.clientWidth  / 2 - PLAYER.w / 2;
+  // Posición inicial
+  PLAYER.x = c.clientWidth / 2 - PLAYER.w / 2;
   PLAYER.y = c.clientHeight - 100;
   PLAYER.dy = 0;
+  PLAYER.glowIntensity = 0;
   prevPlayerY = PLAYER.y;
 
-  // Objetivos de movimiento (USAR 'c', NO 'canvas')
-  mouseX       = c.clientWidth / 2;
-  targetX      = c.clientWidth / 2;
+  // Objetivos de movimiento
+  mouseX = c.clientWidth / 2;
+  targetX = c.clientWidth / 2;
   smoothMouseX = c.clientWidth / 2;
 
-  // Mundo
   bullets = [];
   createInitialPlatforms();
 
-  // Fin del booster inicial y primer spawn
+  // Fin del booster inicial
   setTimeout(() => {
     boosting = false;
     boostingTime = 0;
@@ -1042,7 +1239,6 @@ if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermis
 
   update();
 }
-
 
 function finalizeGameOver() {
   isGameRunning = false;
@@ -1058,43 +1254,41 @@ function finalizeGameOver() {
     if (typeof window.renderTop === 'function') window.renderTop();
     if (typeof window.saveProgress === 'function') window.saveProgress();
   }
-  // Mostrar overlay final (quedarse en game view hasta que el usuario vuelva)
   $finalScore && ($finalScore.textContent = String(score));
   $finalCoins && ($finalCoins.textContent = String(Math.floor(score/100)));
   $overlayGameOver?.classList.remove('hidden');
 }
-// ===== SOFT GAME OVER (¿Continuar?) =====
-function endGame(){
+
+function endGame() {
   onPlayerDeath('generic');
 }
 
-function onPlayerDeath(reason){
+function onPlayerDeath(reason) {
   if (!isGameRunning) return;
   isAwaitingContinue = true;
-  isGameRunning = false; // pausamos el loop, reanudamos tras continue
+  isGameRunning = false;
   setPaused(false);
 
   deathCount += 1;
   continuePriceWLD = 0.11 + 0.05 * (deathCount - 1);
   if ($continuePrice) $continuePrice.textContent = `${continuePriceWLD.toFixed(2)} WLD`;
 
-  // Mostrar overlay y arrancar cuenta 5s
   $overlayContinue?.classList.remove('hidden');
-  startPieCountdown(5); // segundos
+  startPieCountdown(5);
 }
 
-function startPieCountdown(seconds){
+function startPieCountdown(seconds) {
   clearInterval(continueTimerId);
   const total = seconds * 1000;
   continueDeadline = Date.now() + total;
 
-  continueTimerId = setInterval(()=>{
+  continueTimerId = setInterval(() => {
     const left = Math.max(0, continueDeadline - Date.now());
-    const pct = 1 - left / total;                 // 0..1
-    const angle = Math.floor(360 * pct) + 'deg';  // 0..360
+    const pct = 1 - left / total;
+    const angle = Math.floor(360 * pct) + 'deg';
     if ($pie) $pie.style.setProperty('--angle', angle);
     if ($pieLabel) $pieLabel.textContent = String(Math.ceil(left/1000));
-    if (left <= 0){
+    if (left <= 0) {
       clearInterval(continueTimerId);
       $overlayContinue?.classList.add('hidden');
       showFinalGameOver();
@@ -1102,124 +1296,90 @@ function startPieCountdown(seconds){
   }, 100);
 }
 
-async function applyContinue(){
-  // Cobro simulado en WLD
+async function applyContinue() {
   const ok = typeof window.payForContinueWLD === 'function'
     ? await window.payForContinueWLD(continuePriceWLD)
     : true;
 
-  if (!ok){
-    // No se pagó
+  if (!ok) {
     $overlayContinue?.classList.add('hidden');
     showFinalGameOver();
     return;
   }
 
-  // Reubicación segura
   safeRespawn();
-  // Cerrar overlay y reanudar
   clearInterval(continueTimerId);
   $overlayContinue?.classList.add('hidden');
   isAwaitingContinue = false;
   isGameRunning = true;
-  update(); // retomar loop
+  update();
 }
 
-function showFinalGameOver(){
+function showFinalGameOver() {
   finalizeGameOver();
 }
 
-function safeRespawn(){
-  // Plataformita de rescate en 60% inferior
+function safeRespawn() {
   const y = canvas.clientHeight * 0.6;
   const w = 100;
   const x = (canvas.clientWidth - w)/2;
   platforms.push({ x, y, w, h: PLATFORM_H, type: 'normal', vx:0, vy:0, baseY:y });
 
-  // Colocar al jugador sobre esa plataforma y pequeño boost
   PLAYER.x = x + (w - PLAYER.w)/2;
   PLAYER.y = y - PLAYER.h - 1;
   PLAYER.dy = jumpStrength * 0.9;
 
-  // Limpieza básica alrededor
   obstacles = obstacles.filter(o => o.y < y - 40 || o.y > y + 80);
   blackHoles = blackHoles.filter(bh => bh.y < y - 80 || bh.y > y + 120);
 }
 
-
-window.startGame = startGame;
-// ===== PAUSE HANDLERS =====
-function setPaused(v){
-  isPaused = !!v;
-  if (isPaused){ $overlayPause?.classList.remove('hidden'); }
-  else { $overlayPause?.classList.add('hidden'); }
-}
-$pauseBtn?.addEventListener('click', ()=> setPaused(!isPaused));
-
-document.getElementById('btn-resume')?.addEventListener('click', ()=> setPaused(false));
-// ===== OVERLAY BUTTONS =====
-document.getElementById('btn-continue')?.addEventListener('click', applyContinue);
-document.getElementById('btn-no-continue')?.addEventListener('click', ()=>{
-  clearInterval(continueTimerId);
-  $overlayContinue?.classList.add('hidden');
-  showFinalGameOver();
-});
-document.getElementById('btn-back-menu')?.addEventListener('click', ()=>{
-  // Volver al Home (cerrar overlays y mostrar Home)
-  $overlayGameOver?.classList.add('hidden');
-  const gameContainer = document.getElementById('game-container');
-  const homeScreen = document.getElementById('home-screen');
-  if (gameContainer) gameContainer.classList.add('hidden');
-  if (homeScreen) homeScreen.classList.remove('hidden');
-});
-
-// Dispara desde el "cuerno" del jugador. La bala sale hacia ARRIBA
-// con ángulo a izq/centro/der según la X tocada en el canvas.
+// ===== SHOOTING SYSTEM =====
 function shootBulletAtX(touchX) {
   if (!isGameRunning || isPaused || isAwaitingContinue) return;
 
   const cw = canvas.clientWidth;
-
-  // 1) Punto de salida = cuerno (ajusta el offset si tu sprite no está centrado)
-  const hornX = PLAYER.x + PLAYER.w * 0.5; // centro del jugador
+  const hornX = PLAYER.x + PLAYER.w * 0.5;
   const hornY = PLAYER.y + 4;
 
-  // 2) Ángulo de disparo según dónde tocaste respecto del cuerno
-  //    Máximo ±60° respecto de vertical.
-  const maxAngle = Math.PI / 3; // 60°
-  const rel = (Math.max(0, Math.min(cw, touchX)) - hornX) / (cw * 0.5); // ~[-1..1]
+  const maxAngle = Math.PI / 3;
+  const rel = (Math.max(0, Math.min(cw, touchX)) - hornX) / (cw * 0.5);
   const angle = Math.max(-maxAngle, Math.min(maxAngle, rel * maxAngle));
 
-  // 3) Velocidad: siempre hacia ARRIBA (dy negativo), con dx según el ángulo
   const speed = 12;
-  const dx = Math.sin(angle) * speed;      // derecha/izquierda
-  const dy = -Math.cos(angle) * speed;     // siempre hacia ARRIBA
+  const dx = Math.sin(angle) * speed;
+  const dy = -Math.cos(angle) * speed;
 
   bullets.push({ x: hornX, y: hornY, dx, dy, r: 4 });
+  
+  // Efecto visual del disparo
+  addParticles(hornX, hornY, 3, '#ff6b6b');
 }
 
+// ===== EVENT HANDLERS =====
+function setPaused(v) {
+  isPaused = !!v;
+  if (isPaused) { 
+    $overlayPause?.classList.remove('hidden'); 
+  } else { 
+    $overlayPause?.classList.add('hidden'); 
+  }
+}
 
-
-// ===== INPUT (PC vs Móvil) =====
-const IS_DESKTOP = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
-
-// En PC: mover con mouse
+// ===== INPUT HANDLING =====
 if (IS_DESKTOP) {
   canvas.addEventListener("mousemove", (e) => {
     const rect = canvas.getBoundingClientRect();
     const newTarget = e.clientX - rect.left;
-    // suavizado
     targetX = targetX * 0.7 + newTarget * 0.3;
   });
 }
-// CLICK = SOLO DISPARAR HACIA ARRIBA, EN LA X DEL CLICK
+
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
   const rect = canvas.getBoundingClientRect();
   shootBulletAtX(e.clientX - rect.left);
 });
 
-// TOUCH = SOLO DISPARAR HACIA ARRIBA, EN LA X DEL TOUCH
 canvas.addEventListener("touchend", (e) => {
   if (!isGameRunning) return;
   const rect = canvas.getBoundingClientRect();
@@ -1228,4 +1388,22 @@ canvas.addEventListener("touchend", (e) => {
   e.preventDefault();
 }, { passive: false });
 
+// ===== UI EVENT LISTENERS =====
+$pauseBtn?.addEventListener('click', () => setPaused(!isPaused));
+document.getElementById('btn-resume')?.addEventListener('click', () => setPaused(false));
+document.getElementById('btn-continue')?.addEventListener('click', applyContinue);
+document.getElementById('btn-no-continue')?.addEventListener('click', () => {
+  clearInterval(continueTimerId);
+  $overlayContinue?.classList.add('hidden');
+  showFinalGameOver();
+});
+document.getElementById('btn-back-menu')?.addEventListener('click', () => {
+  $overlayGameOver?.classList.add('hidden');
+  const gameContainer = document.getElementById('game-container');
+  const homeScreen = document.getElementById('home-screen');
+  if (gameContainer) gameContainer.classList.add('hidden');
+  if (homeScreen) homeScreen.classList.remove('hidden');
+});
 
+// ===== EXPORTS =====
+window.startGame = startGame;
