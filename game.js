@@ -134,10 +134,10 @@ class GyroscopeController {
     this.hasPermission = false;
     
     // Configuración optimizada
-    this.DEAD_ZONE = 3.0;
-    this.MAX_TILT = 30.0;
-    this.SENSITIVITY = 1.5;
-    this.SMOOTHING = 0.15;
+    this.DEAD_ZONE = 5;
+    this.MAX_TILT = 45.0;
+    this.SENSITIVITY = 1.0;
+    this.SMOOTHING = 0.1;
     
     this.init();
   }
