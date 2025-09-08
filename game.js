@@ -21,12 +21,14 @@ resizeCanvasToContainer();
 // ===== WORLD STATE =====
 let isGameRunning = false;
 let boosting = false;
-let initialBoost = true;
+let initialBoost = false;
 let boostingTime = 0;
 let score = 0;
+let highestY = 0;
 let cameraY = 0;
 let prevPlayerY = 0;
 let gameStarted = false;
+let gameHeight = 0;
 
 // ===== PAUSE & CONTINUE STATE =====
 let isPaused = false;
@@ -36,10 +38,10 @@ let continuePriceWLD = 0.11;
 let continueDeadline = 0;
 let continueTimerId = null;
 
-// Sistema de cadenas
-let breakableChain = [];
-let activeChainIndex = -1;
-let isChainActive = false;
+// Doodle Jump style effects
+let screenShake = 0;
+let comboMultiplier = 1;
+let lastPlatformHit = 0;
 
 // Helper UI refs
 const $pauseBtn = document.getElementById('btn-pause');
@@ -52,22 +54,28 @@ const $pieLabel = document.getElementById('pie-label');
 const $finalScore = document.getElementById('final-score');
 const $finalCoins = document.getElementById('final-coins');
 
-// ===== PLAYER OBJECT =====
+// ===== DOODLE CHARACTER =====
 const PLAYER = {
   x: 180,
   y: 600,
-  w: 40,
-  h: 40,
+  w: 28,
+  h: 32,
   dy: 0,
   vx: 0,
-  glowIntensity: 0,
-  trailParticles: []
+  facing: 1, // 1 = right, -1 = left
+  animFrame: 0,
+  animSpeed: 0.2,
+  bounceScale: 1,
+  trailParticles: [],
+  onPlatform: false
 };
 
-// Configuración de física
-let gravity = 0.35;
-let jumpStrength = -12;
-let maxFallSpeed = 15;
+// Doodle Jump Physics - more authentic feel
+let gravity = 0.4;
+let jumpStrength = -14;
+let maxFallSpeed = 12;
+let horizontalSpeed = 6;
+let airResistance = 0.98;
 
 // Arrays de elementos del juego
 let platforms = [];
@@ -76,36 +84,24 @@ let blackHoles = [];
 let boosters = [];
 let bullets = [];
 let particles = [];
+let springs = [];
+let enemies = [];
 
 // Configuraciones
-const BASE_PLATFORM_W = 90;
-const PLATFORM_H = 12;
+const BASE_PLATFORM_W = 65;
+const PLATFORM_H = 16;
 
-// Tipos de plataformas
+// Tipos de plataformas (Doodle Jump style)
 const PLATFORM_TYPES = {
   NORMAL: 'normal',
-  MOVING_HORIZONTAL: 'moving_horizontal',
-  MOVING_VERTICAL: 'moving_vertical',
+  MOVING: 'moving',
   BREAKABLE: 'breakable',
-  TRANSPARENT: 'transparent',
-  SUPER_JUMP: 'super_jump',
-  GREAT_JUMP: 'great_jump',
-  MINI_JUMP: 'mini_jump'
+  DISAPPEARING: 'disappearing',
+  ICE: 'ice',
+  SPRING: 'spring'
 };
 
-// Tipos de obstáculos
-const OBSTACLE_TYPES = {
-  ONE_LIFE: 1,
-  TWO_LIFE: 2
-};
-
-// Tipos de boosters
-const BOOSTER_TYPES = {
-  SHORT: 'short',
-  LONG: 'long'
-};
-
-// ===== SISTEMA DE MOVIMIENTO MÓVIL PROFESIONAL =====
+// ===== MOBILE MOVEMENT SYSTEM =====
 let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
@@ -113,16 +109,14 @@ let lastTiltReading = 0;
 let smoothTilt = 0;
 let calibrationSamples = [];
 
-// Detección de dispositivo mejorada
 const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
                  ('ontouchstart' in window) || 
                  (navigator.maxTouchPoints > 0);
 const IS_DESKTOP = !IS_MOBILE;
 
-// Variables para movimiento desktop
 let mouseX = 200, targetX = 200, smoothMouseX = 200;
 
-// SISTEMA DE GIROSCOPIO PROFESIONAL Y REDISEÑADO
+// Enhanced Gyroscope Controller for Doodle Jump feel
 class GyroscopeController {
   constructor() {
     this.isActive = false;
@@ -133,11 +127,11 @@ class GyroscopeController {
     this.smoothTilt = 0;
     this.hasPermission = false;
     
-    // Configuración optimizada
-    this.DEAD_ZONE = 1.0;
-    this.MAX_TILT = 15.0;
-    this.SENSITIVITY = 0.8;
-    this.SMOOTHING = 0.05;
+    // Doodle Jump optimized settings
+    this.DEAD_ZONE = 0.8;
+    this.MAX_TILT = 20.0;
+    this.SENSITIVITY = 1.2;
+    this.SMOOTHING = 0.08;
     
     this.init();
   }
@@ -148,20 +142,16 @@ class GyroscopeController {
       return;
     }
     
-    console.log('[GYRO] Inicializando sistema profesional');
-    
-    // Solicitar permisos en iOS
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
       try {
         const response = await DeviceOrientationEvent.requestPermission();
         this.hasPermission = response === 'granted';
         console.log(`[GYRO] Permisos iOS: ${this.hasPermission ? 'CONCEDIDOS' : 'DENEGADOS'}`);
       } catch (error) {
-        console.warn('[GYRO] Error solicitando permisos iOS:', error);
         this.hasPermission = false;
       }
     } else {
-      this.hasPermission = true; // Android y otros
+      this.hasPermission = true;
     }
     
     if (this.hasPermission) {
@@ -176,7 +166,6 @@ class GyroscopeController {
     
     this.isActive = true;
     this.startCalibration();
-    console.log('[GYRO] Sistema activo');
   }
   
   handleOrientation(event) {
@@ -185,115 +174,58 @@ class GyroscopeController {
     const rawGamma = event.gamma;
     this.lastTiltReading = rawGamma;
     
-    // Fase de calibración
     if (!this.isCalibrated) {
       this.samples.push(rawGamma);
       return;
     }
     
-    // Procesar inclinación calibrada
     let calibratedTilt = rawGamma - this.calibrationOffset;
     
-    // Aplicar zona muerta para estabilidad
     if (Math.abs(calibratedTilt) < this.DEAD_ZONE) {
       calibratedTilt = 0;
     } else {
-      // Remover zona muerta manteniendo dirección
       const sign = calibratedTilt > 0 ? 1 : -1;
       calibratedTilt = sign * (Math.abs(calibratedTilt) - this.DEAD_ZONE);
     }
     
-    // Normalizar a rango [-1, 1]
     calibratedTilt = Math.max(-this.MAX_TILT, Math.min(this.MAX_TILT, calibratedTilt));
     let normalizedTilt = (calibratedTilt / this.MAX_TILT) * this.SENSITIVITY;
     normalizedTilt = Math.max(-1, Math.min(1, normalizedTilt));
     
-    // Suavizado adaptativo
     this.smoothTilt = this.smoothTilt * (1 - this.SMOOTHING) + normalizedTilt * this.SMOOTHING;
     this.tiltValue = this.smoothTilt;
     
-    // Actualizar variable global
     tiltInput = this.tiltValue;
   }
   
   startCalibration() {
     this.samples = [];
     this.isCalibrated = false;
-    console.log('[GYRO] Iniciando calibración inteligente...');
     
     setTimeout(() => {
-      if (this.samples.length >= 15) {
-        // Usar mediana para robustez
+      if (this.samples.length >= 10) {
         this.samples.sort((a, b) => a - b);
         const mid = Math.floor(this.samples.length / 2);
         this.calibrationOffset = this.samples[mid];
         this.isCalibrated = true;
-        console.log(`[GYRO] Calibración completada: ${this.calibrationOffset.toFixed(2)}°`);
-        
-        // Notificar al usuario
-        this.showCalibrationComplete();
+        console.log(`[GYRO] Calibrado: ${this.calibrationOffset.toFixed(2)}°`);
       } else {
-        console.warn('[GYRO] Muestras insuficientes, usando valor por defecto');
         this.calibrationOffset = 0;
         this.isCalibrated = true;
       }
-    }, 1500);
-  }
-  
-  showCalibrationComplete() {
-    // Crear indicador visual temporal
-    const indicator = document.createElement('div');
-    indicator.style.cssText = `
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(46, 204, 113, 0.9);
-      color: white;
-      padding: 10px 20px;
-      border-radius: 25px;
-      font-size: 14px;
-      font-weight: bold;
-      z-index: 10000;
-      pointer-events: none;
-      transition: opacity 0.3s ease;
-    `;
-    indicator.textContent = '📱 Giroscopio calibrado';
-    document.body.appendChild(indicator);
-    
-    setTimeout(() => {
-      indicator.style.opacity = '0';
-      setTimeout(() => indicator.remove(), 300);
-    }, 1500);
-  }
-  
-  recalibrate() {
-    if (this.isActive) {
-      console.log('[GYRO] Recalibración manual iniciada');
-      this.startCalibration();
-    }
+    }, 1000);
   }
   
   getTiltInput() {
     return this.isCalibrated ? this.tiltValue : 0;
   }
-  
-  getStatus() {
-    return {
-      isActive: this.isActive,
-      isCalibrated: this.isCalibrated,
-      hasPermission: this.hasPermission,
-      currentTilt: this.tiltValue,
-      calibrationOffset: this.calibrationOffset
-    };
-  }
 }
 
-// Instanciar controlador de giroscopio
 const gyroController = new GyroscopeController();
-// ===== PARTICLE SYSTEM =====
-class Particle {
-  constructor(x, y, vx, vy, color, life, size = 2) {
+
+// ===== ENHANCED PARTICLE SYSTEM =====
+class DoodleParticle {
+  constructor(x, y, vx, vy, color, life, size = 2, type = 'circle') {
     this.x = x;
     this.y = y;
     this.vx = vx;
@@ -302,25 +234,64 @@ class Particle {
     this.life = life;
     this.maxLife = life;
     this.size = size;
+    this.type = type;
+    this.gravity = 0.2;
+    this.bounce = 0.7;
   }
   
   update() {
     this.x += this.vx;
     this.y += this.vy;
-    this.vy += 0.1;
+    this.vy += this.gravity;
     this.life--;
-    this.vx *= 0.99;
+    this.vx *= 0.98;
+    
+    // Bounce off screen edges
+    if (this.x < 0 || this.x > canvas.clientWidth) {
+      this.vx *= -this.bounce;
+      this.x = Math.max(0, Math.min(canvas.clientWidth, this.x));
+    }
   }
   
   draw(ctx) {
     const alpha = this.life / this.maxLife;
     ctx.save();
     ctx.globalAlpha = alpha;
+    
+    if (this.type === 'star') {
+      this.drawStar(ctx);
+    } else {
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    ctx.restore();
+  }
+  
+  drawStar(ctx) {
+    const spikes = 5;
+    const outerRadius = this.size;
+    const innerRadius = this.size * 0.4;
+    
     ctx.fillStyle = this.color;
     ctx.beginPath();
-    ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+    ctx.translate(this.x, this.y);
+    
+    for (let i = 0; i < spikes * 2; i++) {
+      const radius = i % 2 === 0 ? outerRadius : innerRadius;
+      const angle = (i * Math.PI) / spikes;
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    
+    ctx.closePath();
     ctx.fill();
-    ctx.restore();
+    ctx.translate(-this.x, -this.y);
   }
   
   isDead() {
@@ -328,87 +299,44 @@ class Particle {
   }
 }
 
-function addParticles(x, y, count, color) {
+function addDoodleParticles(x, y, count, color, type = 'circle') {
   for (let i = 0; i < count; i++) {
     const angle = (Math.PI * 2 * i) / count;
-    const speed = 2 + Math.random() * 3;
+    const speed = 2 + Math.random() * 4;
     const vx = Math.cos(angle) * speed;
-    const vy = Math.sin(angle) * speed - 2;
-    particles.push(new Particle(x, y, vx, vy, color, 30 + Math.random() * 20));
+    const vy = Math.sin(angle) * speed - 3;
+    particles.push(new DoodleParticle(x, y, vx, vy, color, 40 + Math.random() * 30, 3 + Math.random() * 2, type));
   }
 }
 
-// ===== PROGRESSIVE DIFFICULTY SYSTEM =====
-function getDifficulty() {
-  const rawLevel = score / 200;
-  const level = Math.floor(rawLevel);
-  const progress = rawLevel - level;
+// ===== DOODLE JUMP DIFFICULTY =====
+function getDoodleDifficulty() {
+  const level = Math.floor(score / 500);
   
-  const lerp = (start, end, t) => start + (end - start) * Math.min(1, t);
-  
-  const base = {
-    gapMin: 120,
-    gapMax: 190,
-    width: BASE_PLATFORM_W,
-    moveProb: 0.08,
-    specialProb: 0.05,
-    obstacleProb: 0.03,
-    blackHoleProb: 0.01,
-    boosterProb: 0.06,
-    speed: 1.0,
-    verticalMoveProb: 0.1,
-    complexPatternProb: 0.05
+  return {
+    level: level,
+    platformGapMin: Math.max(40, 80 - level * 3),
+    platformGapMax: Math.max(80, 150 - level * 5),
+    platformWidth: Math.max(45, BASE_PLATFORM_W - level * 2),
+    movingPlatformProb: Math.min(0.3, 0.05 + level * 0.02),
+    breakablePlatformProb: Math.min(0.2, level * 0.015),
+    springProb: Math.min(0.1, 0.01 + level * 0.008),
+    enemyProb: Math.min(0.15, level * 0.01),
+    movingSpeed: Math.min(3, 1 + level * 0.2)
   };
-  
-  const perLevel = {
-    gapMin: -3,
-    gapMax: -4,
-    width: -2,
-    moveProb: 0.02,
-    specialProb: 0.015,
-    obstacleProb: 0.012,
-    blackHoleProb: 0.008,
-    boosterProb: 0.008,
-    speed: 0.1,
-    verticalMoveProb: 0.025,
-    complexPatternProb: 0.04
-  };
-  
-  const current = {};
-  for (const key in base) {
-    const levelValue = base[key] + (perLevel[key] * level);
-    const nextLevelValue = base[key] + (perLevel[key] * (level + 1));
-    current[key] = lerp(levelValue, nextLevelValue, progress);
-  }
-  
-  // Aplicar límites
-  current.gapMin = Math.max(60, current.gapMin);
-  current.gapMax = Math.max(current.gapMin + 20, current.gapMax);
-  current.width = Math.max(45, current.width);
-  current.moveProb = Math.min(0.6, current.moveProb);
-  current.specialProb = Math.min(0.4, current.specialProb);
-  current.obstacleProb = Math.min(0.35, current.obstacleProb);
-  current.blackHoleProb = Math.min(0.15, current.blackHoleProb);
-  current.boosterProb = Math.min(0.25, current.boosterProb);
-  current.speed = Math.min(3.5, current.speed);
-  current.verticalMoveProb = Math.min(0.5, current.verticalMoveProb);
-  current.complexPatternProb = Math.min(0.8, current.complexPatternProb);
-  
-  return { level, progress, ...current };
 }
 
-// ===== PLATFORM GENERATION =====
-function createInitialPlatforms() {
+// ===== PLATFORM GENERATION (Doodle Jump Style) =====
+function createDoodlePlatforms() {
   platforms = [];
   obstacles = [];
   blackHoles = [];
   boosters = [];
   particles = [];
+  springs = [];
+  enemies = [];
   
-  breakableChain = [];
-  activeChainIndex = -1;
-  isChainActive = false;
-  
+  // Starting platform
   let y = canvas.clientHeight - 60;
   platforms.push({
     x: canvas.clientWidth / 2 - 60,
@@ -417,494 +345,345 @@ function createInitialPlatforms() {
     h: PLATFORM_H,
     type: PLATFORM_TYPES.NORMAL,
     vx: 0,
-    vy: 0,
-    baseY: y
+    baseX: canvas.clientWidth / 2 - 60,
+    disappeared: false,
+    breakTimer: 0
   });
-}
-
-function spawnComplexPattern(y, difficulty) {
-  const cw = canvas.clientWidth;
-  const w = difficulty.width;
   
-  const patterns = [
-    // Patrón: Zigzag de plataformas móviles
-    () => {
-      for (let i = 0; i < 3; i++) {
-        const x = (i % 2 === 0) ? 20 : cw - w - 20;
-        const platformY = y - (i * 25);
-        platforms.push({
-          x: x, y: platformY, w: w * 0.8, h: PLATFORM_H,
-          type: PLATFORM_TYPES.MOVING_HORIZONTAL,
-          vx: (i % 2 === 0) ? difficulty.speed : -difficulty.speed,
-          vy: 0, baseY: platformY
-        });
-      }
-    },
-    
-    // Patrón: Plataforma transparente con obstáculo y alternativa
-    () => {
-      const mainX = cw * 0.3;
-      const altX = cw * 0.7;
-      platforms.push({
-        x: mainX, y: y, w: w, h: PLATFORM_H,
-        type: PLATFORM_TYPES.TRANSPARENT, vx: 0, vy: 0, baseY: y
-      });
-      platforms.push({
-        x: altX, y: y - 20, w: w, h: PLATFORM_H,
-        type: PLATFORM_TYPES.NORMAL, vx: 0, vy: 0, baseY: y - 20
-      });
-      obstacles.push({
-        x: mainX + w/2 - 15, y: y - 35, w: 30, h: 30,
-        lives: 1, maxLives: 1, vx: 0
-      });
-    },
-    
-    // Patrón: Escalera ascendente
-    () => {
-      const types = [PLATFORM_TYPES.NORMAL, PLATFORM_TYPES.GREAT_JUMP, PLATFORM_TYPES.MOVING_HORIZONTAL];
-      for (let i = 0; i < 4; i++) {
-        const x = 30 + (i * (cw - 60 - w) / 3);
-        const platformY = y - (i * 15);
-        const type = types[i % types.length];
-        platforms.push({
-          x: x, y: platformY, w: w * 0.9, h: PLATFORM_H,
-          type: type,
-          vx: type === PLATFORM_TYPES.MOVING_HORIZONTAL ? (i % 2 === 0 ? difficulty.speed : -difficulty.speed) : 0,
-          vy: 0, baseY: platformY
-        });
-      }
-    },
-    
-    // Patrón: Super jump con landing challenge
-    () => {
-      platforms.push({
-        x: cw * 0.15, y: y, w: w * 0.7, h: PLATFORM_H,
-        type: PLATFORM_TYPES.SUPER_JUMP, vx: 0, vy: 0, baseY: y
-      });
-      platforms.push({
-        x: cw * 0.8, y: y - 60, w: w * 0.6, h: PLATFORM_H,
-        type: PLATFORM_TYPES.NORMAL, vx: 0, vy: 0, baseY: y - 60
-      });
-      blackHoles.push({
-        x: cw * 0.5, y: y - 30, radius: 18, pullRadius: 50, rotation: 0
-      });
-    }
-  ];
-  
-  const maxPatterns = Math.min(patterns.length, 3 + Math.floor(difficulty.level / 2));
-  const availablePatterns = patterns.slice(0, maxPatterns);
-  const pattern = availablePatterns[Math.floor(Math.random() * availablePatterns.length)];
-  pattern();
-}
-
-function spawnPlatformAt(y, widthOpt) {
-  if (initialBoost) return;
-  
-  const difficulty = getDifficulty();
-  const cw = canvas.clientWidth;
-  
-  if (Math.random() < difficulty.complexPatternProb) {
-    spawnComplexPattern(y, difficulty);
-    return;
+  // Generate initial platforms going up
+  for (let i = 1; i < 20; i++) {
+    spawnDoodlePlatform(y - (i * 100));
   }
+}
+
+function spawnDoodlePlatform(y) {
+  const difficulty = getDoodleDifficulty();
+  const cw = canvas.clientWidth;
+  const w = difficulty.platformWidth;
   
-  const w = widthOpt || difficulty.width;
   let x = Math.random() * (cw - w);
-  
   let type = PLATFORM_TYPES.NORMAL;
-  let vx = 0, vy = 0;
+  let vx = 0;
+  let baseX = x;
   
-  if (Math.random() < difficulty.moveProb) {
-    if (Math.random() < difficulty.verticalMoveProb) {
-      type = PLATFORM_TYPES.MOVING_VERTICAL;
-      vy = Math.random() < 0.5 ? -difficulty.speed * 0.7 : difficulty.speed * 0.7;
-    } else {
-      type = PLATFORM_TYPES.MOVING_HORIZONTAL;
-      vx = Math.random() < 0.5 ? -difficulty.speed : difficulty.speed;
-    }
-  } else if (Math.random() < difficulty.specialProb) {
-    const specialTypes = [
-      PLATFORM_TYPES.BREAKABLE,
-      PLATFORM_TYPES.TRANSPARENT,
-      PLATFORM_TYPES.SUPER_JUMP,
-      PLATFORM_TYPES.GREAT_JUMP,
-      PLATFORM_TYPES.MINI_JUMP
-    ];
-    type = specialTypes[Math.floor(Math.random() * specialTypes.length)];
-    
-    if (type === PLATFORM_TYPES.TRANSPARENT) {
-      const altX = x > cw/2 ? 30 : cw - w - 30;
-      platforms.push({
-        x: altX, y: y + rand(-20, 20), w: w, h: PLATFORM_H,
-        type: PLATFORM_TYPES.NORMAL, vx: 0, vy: 0, baseY: y + rand(-20, 20)
-      });
-    }
+  // Determine platform type based on difficulty
+  const rand = Math.random();
+  
+  if (rand < difficulty.movingPlatformProb) {
+    type = PLATFORM_TYPES.MOVING;
+    vx = (Math.random() < 0.5 ? -1 : 1) * difficulty.movingSpeed;
+    baseX = x;
+  } else if (rand < difficulty.movingPlatformProb + difficulty.breakablePlatformProb) {
+    type = PLATFORM_TYPES.BREAKABLE;
   }
   
-  platforms.push({ 
-    x, y, w, h: PLATFORM_H, type, vx, vy, baseY: y,
-    health: type === PLATFORM_TYPES.BREAKABLE ? 1 : -1 
+  platforms.push({
+    x, y, w, h: PLATFORM_H, type, vx, baseX,
+    disappeared: false,
+    breakTimer: 0,
+    bounceScale: 1
   });
   
-  // Spawns adicionales
-  if (Math.random() < difficulty.obstacleProb) {
-    spawnObstacle(y - rand(30, 60));
+  // Add springs occasionally
+  if (Math.random() < difficulty.springProb) {
+    springs.push({
+      x: x + w/2 - 8,
+      y: y - 20,
+      w: 16,
+      h: 20,
+      compressed: 0,
+      bounceScale: 1
+    });
   }
   
-  if (Math.random() < difficulty.blackHoleProb) {
-    spawnBlackHole(y - rand(40, 70));
-  }
-  
-  if (Math.random() < difficulty.boosterProb) {
-    spawnBooster(y - rand(20, 40));
+  // Add enemies occasionally  
+  if (Math.random() < difficulty.enemyProb) {
+    spawnEnemy(y - 40);
   }
 }
 
-function spawnObstacle(y) {
+function spawnEnemy(y) {
   const cw = canvas.clientWidth;
-  const lives = Math.random() < 0.6 ? 1 : 2;
-  
-  obstacles.push({
+  enemies.push({
     x: Math.random() * (cw - 30),
     y: y,
-    w: 30,
-    h: 30,
-    lives: lives,
-    maxLives: lives,
-    vx: lives === 1 ? (Math.random() < 0.5 ? -1.5 : 1.5) : 0
+    w: 24,
+    h: 24,
+    vx: (Math.random() < 0.5 ? -1 : 1) * (1 + Math.random()),
+    animFrame: 0,
+    alive: true
   });
 }
 
-function spawnBlackHole(y) {
-  const cw = canvas.clientWidth;
-  blackHoles.push({
-    x: Math.random() * (cw - 40),
-    y: y,
-    radius: 20,
-    pullRadius: 70,
-    rotation: 0
-  });
-}
-
-function spawnBooster(y) {
-  const cw = canvas.clientWidth;
-  const type = Math.random() < 0.6 ? BOOSTER_TYPES.SHORT : BOOSTER_TYPES.LONG;
-  
-  boosters.push({
-    x: Math.random() * (cw - 25),
-    y: y,
-    w: 25,
-    h: 25,
-    type: type,
-    bobOffset: Math.random() * Math.PI * 2
-  });
-}
-
-function maybeSpawnNewTopPlatforms() {
+function maybeSpawnDoodlePlatforms() {
   let topY = Infinity;
-  for (const p of platforms) if (p.y < topY) topY = p.y;
+  for (const p of platforms) {
+    if (p.y < topY) topY = p.y;
+  }
   
-  const difficulty = getDifficulty();
-  while (topY > -400) {
-    const nextY = topY - rand(difficulty.gapMin, difficulty.gapMax);
-    spawnPlatformAt(nextY);
-    topY = nextY;
+  while (topY > cameraY - 800) {
+    const difficulty = getDoodleDifficulty();
+    topY -= 60 + Math.random() * 40;
+    spawnDoodlePlatform(topY);
   }
 }
 
-function rand(min, max) { 
-  return Math.floor(Math.random() * (max - min + 1)) + min; 
-}
-
-// ===== UPDATE LOGIC =====
-function updatePlayer() {
-  // Actualizar efectos visuales
-  PLAYER.glowIntensity = boosting ? Math.sin(Date.now() * 0.01) * 0.5 + 0.5 : 0;
+// ===== DOODLE JUMP UPDATE LOGIC =====
+function updateDoodlePlayer() {
+  const prevY = PLAYER.y;
   
-  // Trail de partículas cuando está boosting
-  if (boosting && Math.random() < 0.3) {
-    const trailX = PLAYER.x + PLAYER.w/2 + (Math.random() - 0.5) * PLAYER.w;
-    const trailY = PLAYER.y + PLAYER.h;
-    particles.push(new Particle(trailX, trailY, 0, 2, '#5b8cff', 20, 1));
+  // Horizontal movement with Doodle Jump feel
+  let horizontalInput = 0;
+  
+  if (IS_DESKTOP) {
+    const centerX = canvas.clientWidth / 2;
+    horizontalInput = (targetX - centerX) / (canvas.clientWidth / 2);
+    horizontalInput = Math.max(-1, Math.min(1, horizontalInput));
+  } else {
+    horizontalInput = gyroController.getTiltInput();
   }
   
-  // Física vertical
+  // Apply horizontal movement
+  PLAYER.vx += horizontalInput * 0.8;
+  PLAYER.vx *= airResistance;
+  PLAYER.vx = Math.max(-horizontalSpeed, Math.min(horizontalSpeed, PLAYER.vx));
+  
+  PLAYER.x += PLAYER.vx;
+  
+  // Screen wrapping
+  if (PLAYER.x + PLAYER.w < 0) {
+    PLAYER.x = canvas.clientWidth;
+  } else if (PLAYER.x > canvas.clientWidth) {
+    PLAYER.x = -PLAYER.w;
+  }
+  
+  // Update facing direction
+  if (PLAYER.vx > 0.5) PLAYER.facing = 1;
+  else if (PLAYER.vx < -0.5) PLAYER.facing = -1;
+  
+  // Vertical physics
   if (boosting) {
-    const boostPower = initialBoost ? -6.5 : -7.5;
-    PLAYER.dy = PLAYER.dy * 0.7 + boostPower * 0.3;
-    PLAYER.y += PLAYER.dy;
-    boostingTime += 16;
+    PLAYER.dy = -16;
+    boosting = false;
+    addDoodleParticles(PLAYER.x + PLAYER.w/2, PLAYER.y + PLAYER.h, 8, '#FFD700', 'star');
   } else {
     PLAYER.y += PLAYER.dy;
     PLAYER.dy += gravity;
     PLAYER.dy = Math.min(PLAYER.dy, maxFallSpeed);
   }
+  
+  // Animation
+  if (Math.abs(PLAYER.vx) > 0.5) {
+    PLAYER.animFrame += PLAYER.animSpeed;
+  }
+  
+  // Bounce scale for landing effect
+  if (PLAYER.onPlatform && PLAYER.bounceScale > 1) {
+    PLAYER.bounceScale = Math.max(1, PLAYER.bounceScale - 0.05);
+  }
+  
+  PLAYER.onPlatform = false;
 }
 
-function updateCamera() {
-  if (!boosting || !initialBoost) {
-    const mid = canvas.clientHeight * 0.45;
-    if (PLAYER.y < mid) {
-      const delta = mid - PLAYER.y;
-      PLAYER.y = mid;
+function updateDoodleCamera() {
+  // Only move camera when player goes up (Doodle Jump style)
+  if (PLAYER.y < highestY) {
+    highestY = PLAYER.y;
+    const targetCameraY = highestY - canvas.clientHeight * 0.6;
+    
+    if (targetCameraY < cameraY) {
+      const deltaY = cameraY - targetCameraY;
+      cameraY = targetCameraY;
       
-      // Mover todos los elementos
+      // Move all game elements
       for (const p of platforms) {
-        p.y += delta;
-        p.baseY += delta;
+        p.y += deltaY;
       }
-      for (const o of obstacles) o.y += delta;
-      for (const bh of blackHoles) bh.y += delta;
-      for (const bs of boosters) bs.y += delta;
-      for (const b of bullets) b.y += delta;
-      for (const particle of particles) particle.y += delta;
+      for (const o of obstacles) o.y += deltaY;
+      for (const bh of blackHoles) bh.y += deltaY;
+      for (const bs of boosters) bs.y += deltaY;
+      for (const b of bullets) b.y += deltaY;
+      for (const particle of particles) particle.y += deltaY;
+      for (const s of springs) s.y += deltaY;
+      for (const e of enemies) e.y += deltaY;
       
-      cameraY += delta;
+      PLAYER.y += deltaY;
       
-      if (gameStarted) {
-        const newScore = Math.floor(cameraY / 5);
-        if (newScore > score) {
-          score = newScore;
-          const scoreElement = document.getElementById("score");
-          if (scoreElement) {
-            scoreElement.innerText = "Score: " + score;
-          }
+      // Update score based on height
+      const newScore = Math.floor(Math.max(0, -cameraY) / 10);
+      if (newScore > score) {
+        score = newScore;
+        const scoreElement = document.getElementById("score");
+        if (scoreElement) {
+          scoreElement.innerText = "Score: " + score;
         }
       }
       
-      maybeSpawnNewTopPlatforms();
+      maybeSpawnDoodlePlatforms();
     }
   }
 }
 
-function updatePlatforms() {
-  for (const p of platforms) {
-    // Movimiento horizontal
-    if (p.vx) {
+function updateDoodlePlatforms() {
+  for (let i = platforms.length - 1; i >= 0; i--) {
+    const p = platforms[i];
+    
+    // Moving platform physics
+    if (p.type === PLATFORM_TYPES.MOVING) {
       p.x += p.vx;
       if (p.x <= 0 || p.x + p.w >= canvas.clientWidth) {
         p.vx *= -1;
       }
     }
     
-    // Movimiento vertical
-    if (p.vy) {
-      p.y += p.vy;
-      if (Math.abs(p.y - p.baseY) > 35) {
-        p.vy *= -1;
+    // Platform bounce effect
+    if (p.bounceScale > 1) {
+      p.bounceScale = Math.max(1, p.bounceScale - 0.08);
+    }
+    
+    // Breakable platform timer
+    if (p.type === PLATFORM_TYPES.BREAKABLE && p.breakTimer > 0) {
+      p.breakTimer--;
+      if (p.breakTimer <= 0) {
+        addDoodleParticles(p.x + p.w/2, p.y, 6, '#8B4513');
+        platforms.splice(i, 1);
+        continue;
       }
     }
     
-    // Colisiones - CORREGIR BUG CRÍTICO
-    if (!boosting && PLAYER.dy > 0) {
-      const prevBottom = prevPlayerY + PLAYER.h;
-      const nowBottom = PLAYER.y + PLAYER.h;
+    // Platform collision (only when falling down)
+    if (PLAYER.dy > 0) {
+      const playerBottom = PLAYER.y + PLAYER.h;
+      const playerLeft = PLAYER.x + 4;
+      const playerRight = PLAYER.x + PLAYER.w - 4;
       
-      // FIX CRÍTICO: validar que prevPlayerY sea válido
-      if (prevBottom <= p.y && nowBottom >= p.y && prevPlayerY > 0) {
-        const overlapX = (PLAYER.x < p.x + p.w) && (PLAYER.x + PLAYER.w > p.x);
+      if (prevPlayerY + PLAYER.h <= p.y && 
+          playerBottom >= p.y && 
+          playerBottom <= p.y + p.h + 5 &&
+          playerRight > p.x && 
+          playerLeft < p.x + p.w) {
         
-        if (overlapX) {
-          if (initialBoost) {
-            gameStarted = true;
-            initialBoost = false;
-          }
-          
-          if (p.type === PLATFORM_TYPES.TRANSPARENT) {
-            continue;
-          }
-          
-          PLAYER.y = p.y - PLAYER.h;
-          
-          // Efectos de aterrizaje
-          addParticles(PLAYER.x + PLAYER.w/2, p.y, 3, '#40b66b');
-          
-          const playerCenter = PLAYER.x + PLAYER.w / 2;
-          const platformRight = p.x + p.w;
-          const buttonZone = platformRight - 15;
-          const touchedButton = PLAYER.x + PLAYER.w > buttonZone;
-          
-          switch (p.type) {
-            case PLATFORM_TYPES.SUPER_JUMP:
-              PLAYER.dy = touchedButton ? jumpStrength * 2.2 : jumpStrength;
-              if (touchedButton) addParticles(PLAYER.x + PLAYER.w/2, PLAYER.y, 8, '#ff1493');
-              break;
-            case PLATFORM_TYPES.GREAT_JUMP:
-              PLAYER.dy = touchedButton ? jumpStrength * 1.6 : jumpStrength;
-              if (touchedButton) addParticles(PLAYER.x + PLAYER.w/2, PLAYER.y, 6, '#ff69b4');
-              break;
-            case PLATFORM_TYPES.MINI_JUMP:
-              PLAYER.dy = touchedButton ? jumpStrength * 0.6 : jumpStrength;
-              if (touchedButton) addParticles(PLAYER.x + PLAYER.w/2, PLAYER.y, 4, '#87ceeb');
-              break;
-            case PLATFORM_TYPES.BREAKABLE:
-              PLAYER.dy = jumpStrength;
-              p.health--;
-              addParticles(PLAYER.x + PLAYER.w/2, p.y, 5, '#8b4513');
-              if (p.health <= 0) {
-                platforms.splice(platforms.indexOf(p), 1);
-              }
-              break;
-            default:
-              PLAYER.dy = jumpStrength;
-          }
+        if (p.type === PLATFORM_TYPES.DISAPPEARING && p.disappeared) {
+          continue;
         }
+        
+        // Land on platform
+        PLAYER.y = p.y - PLAYER.h;
+        PLAYER.dy = jumpStrength;
+        PLAYER.onPlatform = true;
+        PLAYER.bounceScale = 1.2;
+        p.bounceScale = 1.3;
+        
+        // Platform-specific effects
+        switch (p.type) {
+          case PLATFORM_TYPES.BREAKABLE:
+            if (p.breakTimer <= 0) {
+              p.breakTimer = 30; // Frames until break
+              addDoodleParticles(PLAYER.x + PLAYER.w/2, p.y, 4, '#8B4513');
+            }
+            break;
+            
+          case PLATFORM_TYPES.ICE:
+            PLAYER.vx += (Math.random() - 0.5) * 3; // Slip effect
+            break;
+        }
+        
+        // Landing effects
+        addDoodleParticles(PLAYER.x + PLAYER.w/2, p.y, 3, '#90EE90');
+        
+        // Screen shake on high jumps
+        if (Math.abs(PLAYER.dy) > 12) {
+          screenShake = 5;
+        }
+        
+        break;
       }
     }
   }
 }
 
-function updateObstacles() {
-  for (let i = obstacles.length - 1; i >= 0; i--) {
-    const o = obstacles[i];
+function updateSprings() {
+  for (const s of springs) {
+    if (s.compressed > 0) {
+      s.compressed--;
+      s.bounceScale = 1 + s.compressed * 0.1;
+    } else {
+      s.bounceScale = Math.max(1, s.bounceScale - 0.05);
+    }
     
-    // Movimiento de obstáculos de 1 vida
-    if (o.lives === 1 && o.maxLives === 1) {
-      o.x += o.vx;
-      if (o.x <= 0 || o.x + o.w >= canvas.clientWidth) {
-        o.vx *= -1;
+    // Spring collision
+    if (PLAYER.dy > 0 &&
+        PLAYER.x + PLAYER.w > s.x &&
+        PLAYER.x < s.x + s.w &&
+        PLAYER.y + PLAYER.h > s.y &&
+        PLAYER.y + PLAYER.h < s.y + s.h + 10) {
+      
+      PLAYER.dy = jumpStrength * 1.8; // Super jump
+      PLAYER.y = s.y - PLAYER.h;
+      s.compressed = 15;
+      screenShake = 8;
+      
+      addDoodleParticles(s.x + s.w/2, s.y, 10, '#FF69B4', 'star');
+    }
+  }
+}
+
+function updateEnemies() {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    
+    if (!e.alive) continue;
+    
+    // Enemy movement
+    e.x += e.vx;
+    if (e.x <= 0 || e.x + e.w >= canvas.clientWidth) {
+      e.vx *= -1;
+    }
+    
+    e.animFrame += 0.1;
+    
+    // Enemy collision with player
+    if (PLAYER.x + PLAYER.w > e.x &&
+        PLAYER.x < e.x + e.w &&
+        PLAYER.y + PLAYER.h > e.y &&
+        PLAYER.y < e.y + e.h) {
+      
+      // Check if player is falling on enemy (can kill enemy)
+      if (PLAYER.dy > 0 && prevPlayerY + PLAYER.h <= e.y + 5) {
+        // Kill enemy
+        e.alive = false;
+        PLAYER.dy = jumpStrength * 1.2;
+        addDoodleParticles(e.x + e.w/2, e.y, 8, '#FF4500');
+        screenShake = 3;
+      } else {
+        // Enemy kills player
+        onPlayerDeath('enemy');
+        return;
       }
     }
     
-    // Matar obstáculos pisándolos desde arriba
-    const playerBottom = PLAYER.y + PLAYER.h;
-    const playerTop = PLAYER.y;
-    const playerLeft = PLAYER.x;
-    const playerRight = PLAYER.x + PLAYER.w;
-    
-    const obstacleTop = o.y;
-    const obstacleBottom = o.y + o.h;
-    const obstacleLeft = o.x;
-    const obstacleRight = o.x + o.w;
-    
-    // FIX: Validar prevPlayerY antes de usar
-    if (PLAYER.dy > 0 && 
-        prevPlayerY > 0 &&
-        prevPlayerY + PLAYER.h <= obstacleTop && 
-        playerBottom >= obstacleTop && 
-        playerRight > obstacleLeft && 
-        playerLeft < obstacleRight) {
-      
-      // Efectos de destrucción
-      addParticles(o.x + o.w/2, o.y, 8, '#ff4757');
-      obstacles.splice(i, 1);
-      PLAYER.dy = jumpStrength * 1.5;
-      PLAYER.y = obstacleTop - PLAYER.h;
-      continue;
-    }
-    
-    // Colisión normal - SOLO si el juego está corriendo correctamente
-    if (isGameRunning && !isAwaitingContinue && !isPaused &&
-        playerLeft < obstacleRight && 
-        playerRight > obstacleLeft &&
-        playerTop < obstacleBottom && 
-        playerBottom > obstacleTop) {
-      onPlayerDeath('obstacle');
-      return;
-    }
-    
-    // Colisión con balas
+    // Bullet collision
     for (let j = bullets.length - 1; j >= 0; j--) {
       const b = bullets[j];
-      if (b.x > obstacleLeft - 5 && b.x < obstacleRight + 5 && 
-          b.y > obstacleTop - 5 && b.y < obstacleBottom + 5) {
+      if (b.x > e.x - 5 && b.x < e.x + e.w + 5 && 
+          b.y > e.y - 5 && b.y < e.y + e.h + 5) {
         bullets.splice(j, 1);
-        o.lives--;
-        addParticles(b.x, b.y, 4, '#e74c3c');
-        if (o.lives <= 0) {
-          addParticles(o.x + o.w/2, o.y + o.h/2, 10, '#ff4757');
-          obstacles.splice(i, 1);
-          break;
-        }
+        e.alive = false;
+        addDoodleParticles(e.x + e.w/2, e.y, 6, '#FF4500');
+        break;
       }
     }
   }
+  
+  // Remove dead enemies
+  enemies = enemies.filter(e => e.alive);
 }
 
-function updateBlackHoles() {
-  for (const bh of blackHoles) {
-    bh.rotation += 0.08;
-    
-    const playerCenterX = PLAYER.x + PLAYER.w / 2;
-    const playerCenterY = PLAYER.y + PLAYER.h / 2;
-    const distance = Math.sqrt(
-      Math.pow(playerCenterX - bh.x, 2) + 
-      Math.pow(playerCenterY - bh.y, 2)
-    );
-    
-    if (distance < bh.pullRadius) {
-      const pullStrength = (bh.pullRadius - distance) / bh.pullRadius * 1.4;
-      const angle = Math.atan2(bh.y - playerCenterY, bh.x - playerCenterX);
-      
-      PLAYER.x += Math.cos(angle) * pullStrength;
-      PLAYER.y += Math.sin(angle) * pullStrength;
-      
-      // Efectos visuales de succión
-      if (Math.random() < 0.4) {
-        const suckX = playerCenterX + (Math.random() - 0.5) * 40;
-        const suckY = playerCenterY + (Math.random() - 0.5) * 40;
-        particles.push(new Particle(suckX, suckY, 
-          (bh.x - suckX) * 0.1, (bh.y - suckY) * 0.1, 
-          '#16213e', 15, 1));
-      }
-    }
-    
-    // FIX: Solo colisión de muerte si el juego está corriendo
-    if (isGameRunning && !isAwaitingContinue && !isPaused && distance < bh.radius) {
-      onPlayerDeath('blackhole');
-      return;
-    }
+function updateScreenShake() {
+  if (screenShake > 0) {
+    screenShake *= 0.9;
+    if (screenShake < 0.5) screenShake = 0;
   }
-}
-
-function updateBoosters() {
-  for (let i = boosters.length - 1; i >= 0; i--) {
-    const bs = boosters[i];
-    
-    bs.bobOffset += 0.08;
-    const originalY = bs.y;
-    bs.y = originalY + Math.sin(bs.bobOffset) * 2;
-    
-    if (PLAYER.x < bs.x + bs.w && 
-        PLAYER.x + PLAYER.w > bs.x &&
-        PLAYER.y < bs.y + bs.h && 
-        PLAYER.y + PLAYER.h > bs.y) {
-      
-      // Efectos visuales de booster
-      addParticles(bs.x + bs.w/2, bs.y + bs.h/2, 12, bs.type === BOOSTER_TYPES.SHORT ? '#2ecc71' : '#3498db');
-      
-      if (bs.type === BOOSTER_TYPES.SHORT) {
-        boosting = true;
-        boostingTime = 0;
-        setTimeout(() => { 
-          boosting = false; 
-          boostingTime = 0; 
-        }, 700);
-      } else {
-        boosting = true;
-        boostingTime = 0;
-        setTimeout(() => { 
-          boosting = false; 
-          boostingTime = 0; 
-        }, 1200);
-      }
-      
-      boosters.splice(i, 1);
-    }
-    
-    bs.y = originalY;
-  }
-}
-
-function updateBullets() {
-  for (const b of bullets) {
-    b.x += b.dx;
-    b.y += b.dy;
-  }
-  bullets = bullets.filter(b => 
-    b.x > -10 && b.x < canvas.clientWidth + 10 && 
-    b.y > -10 && b.y < canvas.clientHeight + 10
-  );
 }
 
 function updateParticles() {
@@ -916,245 +695,216 @@ function updateParticles() {
   }
 }
 
-function cleanupElements() {
-  const screenBottom = canvas.clientHeight + 100;
-  platforms = platforms.filter(p => p.y < screenBottom);
-  obstacles = obstacles.filter(o => o.y < screenBottom);
-  blackHoles = blackHoles.filter(bh => bh.y < screenBottom);
-  boosters = boosters.filter(bs => bs.y < screenBottom);
+function updateBullets() {
+  for (const b of bullets) {
+    b.x += b.dx;
+    b.y += b.dy;
+  }
+  bullets = bullets.filter(b => 
+    b.x > -10 && b.x < canvas.clientWidth + 10 && 
+    b.y > cameraY - 100 && b.y < canvas.clientHeight + cameraY + 100
+  );
 }
 
-// ===== ENHANCED DRAWING =====
-function drawPlayer() {
+function cleanupElements() {
+  const screenBottom = canvas.clientHeight + cameraY + 200;
+  platforms = platforms.filter(p => p.y < screenBottom);
+  obstacles = obstacles.filter(o => o.y < screenBottom);
+  springs = springs.filter(s => s.y < screenBottom);
+  enemies = enemies.filter(e => e.y < screenBottom);
+}
+
+// ===== DOODLE JUMP DRAWING =====
+function drawDoodlePlayer() {
+  ctx.save();
+  
+  // Apply screen shake
+  if (screenShake > 0) {
+    const shakeX = (Math.random() - 0.5) * screenShake;
+    const shakeY = (Math.random() - 0.5) * screenShake;
+    ctx.translate(shakeX, shakeY);
+  }
+  
   const centerX = PLAYER.x + PLAYER.w / 2;
   const centerY = PLAYER.y + PLAYER.h / 2;
   
-  // Glow effect cuando está boosting
-  if (boosting || PLAYER.glowIntensity > 0) {
-    const glowSize = PLAYER.w + (PLAYER.glowIntensity * 10);
-    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowSize);
-    gradient.addColorStop(0, `rgba(91, 140, 255, ${0.3 + PLAYER.glowIntensity * 0.4})`);
-    gradient.addColorStop(1, 'rgba(91, 140, 255, 0)');
-    
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, glowSize, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // Scale for bounce effect
+  ctx.translate(centerX, centerY);
+  ctx.scale(PLAYER.bounceScale * PLAYER.facing, PLAYER.bounceScale);
+  ctx.translate(-centerX, -centerY);
   
-  // Cuerpo principal con gradiente
-  const bodyGradient = ctx.createLinearGradient(PLAYER.x, PLAYER.y, PLAYER.x, PLAYER.y + PLAYER.h);
-  bodyGradient.addColorStop(0, '#7ba3ff');
-  bodyGradient.addColorStop(1, '#4a75ff');
-  
-  ctx.fillStyle = bodyGradient;
+  // Doodle character body
+  ctx.fillStyle = '#4A90E2';
   ctx.fillRect(PLAYER.x, PLAYER.y, PLAYER.w, PLAYER.h);
   
-  // Highlight superior
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-  ctx.fillRect(PLAYER.x + 2, PLAYER.y + 2, PLAYER.w - 4, 8);
+  // Character details
+  ctx.fillStyle = '#FFFFFF';
+  // Eyes
+  ctx.fillRect(PLAYER.x + 6, PLAYER.y + 6, 4, 4);
+  ctx.fillRect(PLAYER.x + 14, PLAYER.y + 6, 4, 4);
   
-  // Borde sutil
-  ctx.strokeStyle = '#2c5aa0';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(PLAYER.x, PLAYER.y, PLAYER.w, PLAYER.h);
+  // Nose
+  ctx.fillStyle = '#FFB347';
+  ctx.fillRect(PLAYER.x + 12, PLAYER.y + 14, 4, 6);
+  
+  // Moving legs animation
+  if (Math.abs(PLAYER.vx) > 0.5) {
+    const legOffset = Math.sin(PLAYER.animFrame * 8) * 2;
+    ctx.fillStyle = '#4A90E2';
+    ctx.fillRect(PLAYER.x + 4 + legOffset, PLAYER.y + PLAYER.h, 6, 8);
+    ctx.fillRect(PLAYER.x + PLAYER.w - 10 - legOffset, PLAYER.y + PLAYER.h, 6, 8);
+  } else {
+    ctx.fillStyle = '#4A90E2';
+    ctx.fillRect(PLAYER.x + 6, PLAYER.y + PLAYER.h, 6, 8);
+    ctx.fillRect(PLAYER.x + PLAYER.w - 12, PLAYER.y + PLAYER.h, 6, 8);
+  }
+  
+  ctx.restore();
 }
 
-function drawPlatforms() {
+function drawDoodlePlatforms() {
   for (const p of platforms) {
+    ctx.save();
+    
+    // Platform bounce effect
+    const centerX = p.x + p.w / 2;
+    const centerY = p.y + p.h / 2;
+    ctx.translate(centerX, centerY);
+    ctx.scale(p.bounceScale, p.bounceScale);
+    ctx.translate(-centerX, -centerY);
+    
     let gradient;
     
     switch (p.type) {
-      case PLATFORM_TYPES.MOVING_HORIZONTAL:
+      case PLATFORM_TYPES.NORMAL:
         gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#ffb347');
-        gradient.addColorStop(1, '#ff8c00');
+        gradient.addColorStop(0, '#7ED321');
+        gradient.addColorStop(1, '#5CB85C');
         break;
-      case PLATFORM_TYPES.MOVING_VERTICAL:
+        
+      case PLATFORM_TYPES.MOVING:
         gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#ff9f5a');
-        gradient.addColorStop(1, '#ff7527');
+        gradient.addColorStop(0, '#FF9500');
+        gradient.addColorStop(1, '#FF7300');
         break;
+        
       case PLATFORM_TYPES.BREAKABLE:
+        const breakAlpha = p.breakTimer > 0 ? 0.5 + Math.sin(p.breakTimer * 0.5) * 0.3 : 1;
         gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#a0522d');
-        gradient.addColorStop(1, '#6b3410');
+        gradient.addColorStop(0, `rgba(139, 69, 19, ${breakAlpha})`);
+        gradient.addColorStop(1, `rgba(101, 67, 33, ${breakAlpha})`);
         break;
-      case PLATFORM_TYPES.TRANSPARENT:
-        ctx.fillStyle = "rgba(64, 182, 107, 0.4)";
-        ctx.fillRect(p.x, p.y, p.w, p.h);
-        // Borde punteado
-        ctx.setLineDash([3, 3]);
-        ctx.strokeStyle = "#40b66b";
-        ctx.strokeRect(p.x, p.y, p.w, p.h);
-        ctx.setLineDash([]);
-        continue;
-      case PLATFORM_TYPES.SUPER_JUMP:
+        
+      case PLATFORM_TYPES.ICE:
         gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#ff69b4');
-        gradient.addColorStop(1, '#dc143c');
+        gradient.addColorStop(0, '#E8F4FD');
+        gradient.addColorStop(1, '#B3D9F2');
         break;
-      case PLATFORM_TYPES.GREAT_JUMP:
-        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#ff8fa3');
-        gradient.addColorStop(1, '#ff1493');
-        break;
-      case PLATFORM_TYPES.MINI_JUMP:
-        gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#b0e0e6');
-        gradient.addColorStop(1, '#4682b4');
-        break;
+        
       default:
         gradient = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        gradient.addColorStop(0, '#5fbf73');
-        gradient.addColorStop(1, '#2e7d32');
+        gradient.addColorStop(0, '#7ED321');
+        gradient.addColorStop(1, '#5CB85C');
     }
     
     ctx.fillStyle = gradient;
     ctx.fillRect(p.x, p.y, p.w, p.h);
     
-    // Highlight superior
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.fillRect(p.x, p.y, p.w, 2);
+    // Platform highlight
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.fillRect(p.x, p.y, p.w, 3);
     
-    // Dibujar botones con animación
-    if (p.type === PLATFORM_TYPES.SUPER_JUMP || 
-        p.type === PLATFORM_TYPES.GREAT_JUMP || 
-        p.type === PLATFORM_TYPES.MINI_JUMP) {
-      
-      const pulse = Math.sin(Date.now() * 0.008) * 0.2 + 0.8;
-      ctx.fillStyle = `rgba(255, 255, 255, ${0.9 * pulse})`;
-      
-      const buttonSize = p.type === PLATFORM_TYPES.SUPER_JUMP ? 10 : 
-                        p.type === PLATFORM_TYPES.GREAT_JUMP ? 8 : 6;
-      
-      ctx.fillRect(p.x + p.w - buttonSize - 2, p.y - buttonSize, buttonSize, buttonSize);
-      
-      // Borde del botón
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(p.x + p.w - buttonSize - 2, p.y - buttonSize, buttonSize, buttonSize);
-    }
+    // Platform shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(p.x, p.y + p.h - 2, p.w, 2);
+    
+    ctx.restore();
   }
 }
 
-function drawObstacles() {
-  for (const o of obstacles) {
-    let gradient;
-    
-    if (o.lives === 1) {
-      gradient = ctx.createRadialGradient(o.x + o.w/2, o.y + o.h/2, 0, o.x + o.w/2, o.y + o.h/2, o.w/2);
-      gradient.addColorStop(0, '#ff6b7a');
-      gradient.addColorStop(1, '#ff3742');
-    } else {
-      gradient = ctx.createRadialGradient(o.x + o.w/2, o.y + o.h/2, 0, o.x + o.w/2, o.y + o.h/2, o.w/2);
-      gradient.addColorStop(0, '#ff7f7f');
-      gradient.addColorStop(1, '#ff4757');
-    }
-    
-    ctx.fillStyle = gradient;
-    ctx.fillRect(o.x, o.y, o.w, o.h);
-    
-    // Borde
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(o.x, o.y, o.w, o.h);
-    
-    // Texto de vidas con sombra
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-    ctx.font = "bold 14px Arial";
-    ctx.textAlign = "center";
-    ctx.fillText(o.lives.toString(), o.x + o.w/2 + 1, o.y + o.h/2 + 6);
-    
-    ctx.fillStyle = "white";
-    ctx.fillText(o.lives.toString(), o.x + o.w/2, o.y + o.h/2 + 5);
-  }
-}
-
-function drawBlackHoles() {
-  for (const bh of blackHoles) {
+function drawSprings() {
+  for (const s of springs) {
     ctx.save();
-    ctx.translate(bh.x, bh.y);
-    ctx.rotate(bh.rotation);
     
-    // Múltiples capas para efecto más realista
-    const layers = [
-      { radius: bh.radius * 1.2, color: '#0f0f23', alpha: 0.3 },
-      { radius: bh.radius, color: '#1a1a2e', alpha: 0.8 },
-      { radius: bh.radius * 0.6, color: '#000000', alpha: 1 }
-    ];
+    // Spring bounce effect
+    const centerX = s.x + s.w / 2;
+    const centerY = s.y + s.h / 2;
+    ctx.translate(centerX, centerY);
+    ctx.scale(1, s.bounceScale);
+    ctx.translate(-centerX, -centerY);
     
-    layers.forEach(layer => {
-      const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, layer.radius);
-      gradient.addColorStop(0, layer.color);
-      gradient.addColorStop(1, 'transparent');
-      
-      ctx.fillStyle = gradient;
-      ctx.globalAlpha = layer.alpha;
-      ctx.beginPath();
-      ctx.arc(0, 0, layer.radius, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    // Spring base
+    ctx.fillStyle = '#FF1493';
+    ctx.fillRect(s.x, s.y + s.h - 4, s.w, 4);
     
-    ctx.globalAlpha = 1;
+    // Spring coils
+    const coilHeight = (s.h - 4) / s.bounceScale;
+    const coils = 4;
     
-    // Anillo de succión animado
-    ctx.strokeStyle = "rgba(100, 149, 237, 0.4)";
-    ctx.lineWidth = 2;
-    const pulseRadius = bh.pullRadius + Math.sin(Date.now() * 0.01) * 5;
+    ctx.strokeStyle = '#FF69B4';
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+    
+    for (let i = 0; i <= coils; i++) {
+      const y = s.y + (i / coils) * coilHeight;
+      const x = s.x + s.w/2 + (i % 2 === 0 ? -4 : 4);
+      
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    
     ctx.stroke();
     
     ctx.restore();
   }
 }
 
-function drawBoosters() {
-  for (const bs of boosters) {
-    const y = bs.y + Math.sin(bs.bobOffset) * 2;
+function drawEnemies() {
+  for (const e of enemies) {
+    if (!e.alive) continue;
     
-    let gradient;
-    if (bs.type === BOOSTER_TYPES.SHORT) {
-      gradient = ctx.createRadialGradient(bs.x + bs.w/2, y + bs.h/2, 0, bs.x + bs.w/2, y + bs.h/2, bs.w/2);
-      gradient.addColorStop(0, '#58d68d');
-      gradient.addColorStop(1, '#27ae60');
-    } else {
-      gradient = ctx.createRadialGradient(bs.x + bs.w/2, y + bs.h/2, 0, bs.x + bs.w/2, y + bs.h/2, bs.w/2);
-      gradient.addColorStop(0, '#5dade2');
-      gradient.addColorStop(1, '#3498db');
+    ctx.save();
+    
+    // Enemy body
+    ctx.fillStyle = '#DC143C';
+    ctx.fillRect(e.x, e.y, e.w, e.h);
+    
+    // Enemy eyes
+    ctx.fillStyle = '#FFFFFF';
+    const eyeOffset = Math.sin(e.animFrame * 4) * 1;
+    ctx.fillRect(e.x + 4 + eyeOffset, e.y + 4, 3, 3);
+    ctx.fillRect(e.x + e.w - 7 + eyeOffset, e.y + 4, 3, 3);
+    
+    // Enemy pupils
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(e.x + 5 + eyeOffset, e.y + 5, 1, 1);
+    ctx.fillRect(e.x + e.w - 6 + eyeOffset, e.y + 5, 1, 1);
+    
+    // Enemy teeth
+    ctx.fillStyle = '#FFFFFF';
+    for (let i = 0; i < 3; i++) {
+      ctx.fillRect(e.x + 4 + i * 4, e.y + e.h - 4, 2, 4);
     }
     
-    ctx.fillStyle = gradient;
-    ctx.fillRect(bs.x, y, bs.w, bs.h);
-    
-    // Efecto de pulso
-    const pulse = Math.sin(bs.bobOffset * 2) * 0.3 + 0.7;
-    ctx.fillStyle = `rgba(255, 255, 255, ${0.4 * pulse})`;
-    ctx.fillRect(bs.x + 3, y + 3, bs.w - 6, bs.h - 6);
-    
-    // Borde brillante
-    ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 * pulse})`;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bs.x, y, bs.w, bs.h);
+    ctx.restore();
   }
 }
 
 function drawBullets() {
   for (const b of bullets) {
-    // Bullet con trail
-    const gradient = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, 6);
-    gradient.addColorStop(0, '#ff6b6b');
-    gradient.addColorStop(0.7, '#e74c3c');
+    // Bullet trail
+    const gradient = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, 8);
+    gradient.addColorStop(0, '#FFD700');
+    gradient.addColorStop(0.7, '#FFA500');
     gradient.addColorStop(1, 'transparent');
     
     ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
     ctx.fill();
     
-    // Core brillante
-    ctx.fillStyle = '#ffffff';
+    // Bullet core
+    ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
     ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
     ctx.fill();
@@ -1165,50 +915,24 @@ function drawParticles() {
   particles.forEach(particle => particle.draw(ctx));
 }
 
-function drawDifficultyInfo() {
-  const difficulty = getDifficulty();
+function drawUI() {
+  // Score with Doodle Jump style
+  ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+  ctx.fillRect(10, 10, 200, 80);
   
-  // Fondo semitransparente para la UI
-  ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
-  ctx.fillRect(5, canvas.clientHeight - 80, 200, 75);
-  
-  ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-  ctx.font = "bold 16px Arial";
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = "bold 24px Arial";
   ctx.textAlign = "left";
+  ctx.fillText(`Score: ${score}`, 20, 40);
   
-  const progressPercent = Math.floor(difficulty.progress * 100);
-  ctx.fillText(`Nivel: ${difficulty.level}`, 10, canvas.clientHeight - 55);
-  ctx.fillText(`Score: ${score}`, 10, canvas.clientHeight - 35);
+  // Height indicator
+  const height = Math.floor(Math.max(0, -cameraY) / 10);
+  ctx.font = "16px Arial";
+  ctx.fillText(`Height: ${height}m`, 20, 65);
   
-  // Barra de progreso mejorada
-  const barWidth = 180;
-  const barHeight = 12;
-  const barX = 10;
-  const barY = canvas.clientHeight - 20;
-  
-  // Fondo de la barra
-  ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
-  ctx.fillRect(barX, barY, barWidth, barHeight);
-  
-  // Progreso con gradiente
-  const progressGradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
-  progressGradient.addColorStop(0, '#3498db');
-  progressGradient.addColorStop(0.5, '#2ecc71');
-  progressGradient.addColorStop(1, '#e74c3c');
-  
-  ctx.fillStyle = progressGradient;
-  ctx.fillRect(barX, barY, barWidth * difficulty.progress, barHeight);
-  
-  // Borde de la barra
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(barX, barY, barWidth, barHeight);
-  
-  // Texto del progreso
-  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-  ctx.font = "10px Arial";
-  ctx.textAlign = "center";
-  ctx.fillText(`${progressPercent}%`, barX + barWidth/2, barY + 8);
+  // Level indicator
+  const difficulty = getDoodleDifficulty();
+  ctx.fillText(`Level: ${difficulty.level}`, 20, 85);
 }
 
 // ===== MAIN UPDATE LOOP =====
@@ -1217,43 +941,13 @@ function update() {
   
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   
-  // ===== SISTEMA DE MOVIMIENTO HORIZONTAL MEJORADO =====
-  {
-    const w = canvas.clientWidth;
-
-    if (IS_DESKTOP) {
-      // PC: seguir al mouse con suavizado natural
-      const minCenter = PLAYER.w / 2;
-      const maxCenter = w - PLAYER.w / 2;
-      const clampedTarget = Math.max(minCenter, Math.min(maxCenter, targetX));
-      smoothMouseX = smoothMouseX * 0.8 + clampedTarget * 0.2;
-      PLAYER.x = smoothMouseX - PLAYER.w / 2;
-    } else {
-  // MÓVIL: Sistema profesional con giroscopio
-  const tilt = gyroController.getTiltInput();
-  const baseSpeed = w * 0.025; // Velocidad base optimizada
-  let moveSpeed = tilt * baseSpeed;
+  // Background gradient (Doodle Jump style)
+  const bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.clientHeight);
+  bgGradient.addColorStop(0, '#87CEEB');
+  bgGradient.addColorStop(1, '#E0F6FF');
+  ctx.fillStyle = bgGradient;
+  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   
-  // Aceleración progresiva mejorada
-  const absInput = Math.abs(tilt);
-  if (absInput > 0.2) {
-    const accelerationFactor = 1 + (absInput - 0.2) * 2;
-    moveSpeed *= accelerationFactor;
-  }
-  
-  // Aplicar movimiento suavizado
-  PLAYER.vx = PLAYER.vx * 0.5 + moveSpeed * 0.1;
-  PLAYER.x += PLAYER.vx;
-}
-
-    // ===== WRAP-AROUND COMPLETO =====
-    if (PLAYER.x > w) {
-      PLAYER.x = -PLAYER.w;
-    } else if (PLAYER.x + PLAYER.w < 0) {
-      PLAYER.x = w;
-    }
-  }
-
   // Pausa - solo mantener overlay visible
   if (isPaused || isAwaitingContinue) {
     if (isGameRunning) requestAnimationFrame(update);
@@ -1261,31 +955,30 @@ function update() {
   }
 
   // Updates del juego
-  updatePlayer();
-  updateCamera();
-  updatePlatforms();
-  updateObstacles();
-  updateBlackHoles();
-  updateBoosters();
+  updateDoodlePlayer();
+  updateDoodleCamera();
+  updateDoodlePlatforms();
+  updateSprings();
+  updateEnemies();
   updateBullets();
   updateParticles();
+  updateScreenShake();
   cleanupElements();
   
   // Verificar caída - SOLO si el juego está corriendo
-  if (isGameRunning && !isAwaitingContinue && PLAYER.y > canvas.clientHeight + 60) {
+  if (isGameRunning && !isAwaitingContinue && PLAYER.y > canvas.clientHeight + cameraY + 200) {
     onPlayerDeath('fall');
     return;
   }
   
   // Drawing con efectos mejorados
-  drawPlayer();
-  drawPlatforms();
-  drawObstacles();
-  drawBlackHoles();
-  drawBoosters();
+  drawDoodlePlatforms();
+  drawSprings();
+  drawEnemies();
+  drawDoodlePlayer();
   drawBullets();
   drawParticles();
-  drawDifficultyInfo();
+  drawUI();
   
   // IMPORTANTE: Actualizar prevPlayerY AL FINAL
   prevPlayerY = PLAYER.y;
@@ -1304,7 +997,7 @@ function startGame() {
 
   resizeCanvasToContainer();
 
-  // Solicitar permisos en iOS MEJORADO
+  // Solicitar permisos en iOS
   if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
     console.log('[iOS] Solicitando permisos...');
     DeviceOrientationEvent.requestPermission()
@@ -1330,31 +1023,36 @@ function startGame() {
   $overlayGameOver?.classList.add('hidden');
 
   isGameRunning = true;
-  boosting = true;
-  initialBoost = true;
+  boosting = false;
+  initialBoost = false;
   boostingTime = 0;
   score = 0;
+  highestY = 0;
   cameraY = 0;
-  gameStarted = false;
+  gameStarted = true;
+  screenShake = 0;
+  comboMultiplier = 1;
 
   const scoreElement = document.getElementById("score");
   if (scoreElement) scoreElement.innerText = "Score: 0";
 
-  // Reset sistema de inclinación PARA MÁXIMA RESPUESTA
+  // Reset sistema de inclinación
   isCalibrated = false;
   calibrationSamples = [];
   calibrationOffset = 0;
   tiltInput = 0;
-  rawTiltInput = 0; // Nuevo campo
-  lastTiltTime = 0;
 
   // Posición inicial centrada
   PLAYER.x = c.clientWidth / 2 - PLAYER.w / 2;
-  PLAYER.y = c.clientHeight - 100;
+  PLAYER.y = c.clientHeight - 150;
   PLAYER.dy = 0;
   PLAYER.vx = 0;
-  PLAYER.glowIntensity = 0;
-  prevPlayerY = PLAYER.y; // IMPORTANTE: Inicializar correctamente
+  PLAYER.facing = 1;
+  PLAYER.animFrame = 0;
+  PLAYER.bounceScale = 1;
+  PLAYER.onPlatform = false;
+  prevPlayerY = PLAYER.y;
+  highestY = PLAYER.y;
 
   // Objetivos de movimiento
   mouseX = c.clientWidth / 2;
@@ -1362,19 +1060,9 @@ function startGame() {
   smoothMouseX = c.clientWidth / 2;
 
   bullets = [];
-  createInitialPlatforms();
+  createDoodlePlatforms();
 
-  console.log('[GAME] Juego iniciado correctamente');
-
-  // Fin del booster inicial
-  setTimeout(() => {
-    boosting = false;
-    boostingTime = 0;
-    initialBoost = false;
-    gameStarted = true;
-    maybeSpawnNewTopPlatforms();
-    console.log('[GAME] Booster inicial terminado');
-  }, 1800);
+  console.log('[GAME] Doodle Jump iniciado correctamente');
 
   update();
 }
@@ -1382,7 +1070,7 @@ function startGame() {
 function finalizeGameOver() {
   console.log('[GAME] Finalizando game over');
   isGameRunning = false;
-  isAwaitingContinue = false; // IMPORTANTE
+  isAwaitingContinue = false;
   
   if (window.uiState) {
     const s = window.uiState;
@@ -1401,13 +1089,11 @@ function finalizeGameOver() {
   $overlayGameOver?.classList.remove('hidden');
 }
 
-// FIX CRÍTICO: Función endGame simplificada
 function endGame() {
   console.log('[GAME] Juego terminado - transición a game over');
   onPlayerDeath('generic');
 }
 
-// FIX CRÍTICO: onPlayerDeath mejorado
 function onPlayerDeath(reason) {
   console.log(`[GAME] Jugador murió: ${reason}`);
   
@@ -1448,11 +1134,9 @@ function startPieCountdown(seconds) {
   }, 100);
 }
 
-// FIX CRÍTICO: applyContinue corregido
 async function applyContinue() {
   console.log(`[CONTINUE] Aplicando continue por ${continuePriceWLD} WLD`);
   
-  // SIMULAR pago exitoso por ahora - CAMBIAR cuando tengas la función real
   let paymentOk = true;
   
   if (typeof window.payForContinueWLD === 'function') {
@@ -1490,26 +1174,28 @@ function showFinalGameOver() {
 function safeRespawn() {
   console.log('[RESPAWN] Respawneando jugador de forma segura');
   
-  const y = canvas.clientHeight * 0.6;
-  const w = 100;
+  const y = PLAYER.y - 100;
+  const w = 80;
   const x = (canvas.clientWidth - w)/2;
   
   // Crear plataforma segura
   platforms.push({ 
     x, y, w, h: PLATFORM_H, 
     type: PLATFORM_TYPES.NORMAL, 
-    vx: 0, vy: 0, baseY: y 
+    vx: 0, baseX: x,
+    disappeared: false,
+    breakTimer: 0,
+    bounceScale: 1
   });
 
   // Posicionar jugador
   PLAYER.x = x + (w - PLAYER.w)/2;
   PLAYER.y = y - PLAYER.h - 5;
-  PLAYER.dy = jumpStrength * 0.9;
-  prevPlayerY = PLAYER.y; // IMPORTANTE: actualizar prevPlayerY
+  PLAYER.dy = jumpStrength;
+  prevPlayerY = PLAYER.y;
 
-  // Limpiar obstáculos cercanos
-  obstacles = obstacles.filter(o => o.y < y - 50 || o.y > y + 100);
-  blackHoles = blackHoles.filter(bh => bh.y < y - 80 || bh.y > y + 120);
+  // Limpiar enemigos cercanos
+  enemies = enemies.filter(e => e.y < y - 80 || e.y > y + 120);
   
   console.log(`[RESPAWN] Jugador respawneado en X:${PLAYER.x.toFixed(1)}, Y:${PLAYER.y.toFixed(1)}`);
 }
@@ -1518,22 +1204,16 @@ function safeRespawn() {
 function shootBulletAtX(touchX) {
   if (!isGameRunning || isPaused || isAwaitingContinue) return;
 
-  const cw = canvas.clientWidth;
   const hornX = PLAYER.x + PLAYER.w * 0.5;
-  const hornY = PLAYER.y + 4;
+  const hornY = PLAYER.y - 5;
 
-  const maxAngle = Math.PI / 3;
-  const rel = (Math.max(0, Math.min(cw, touchX)) - hornX) / (cw * 0.5);
-  const angle = Math.max(-maxAngle, Math.min(maxAngle, rel * maxAngle));
-
-  const speed = 12;
-  const dx = Math.sin(angle) * speed;
-  const dy = -Math.cos(angle) * speed;
+  const dx = 0; // Straight up like Doodle Jump
+  const dy = -10;
 
   bullets.push({ x: hornX, y: hornY, dx, dy, r: 4 });
   
   // Efecto visual del disparo
-  addParticles(hornX, hornY, 3, '#ff6b6b');
+  addDoodleParticles(hornX, hornY, 3, '#FFD700');
 }
 
 // ===== EVENT HANDLERS =====
@@ -1547,18 +1227,15 @@ function setPaused(v) {
   }
 }
 
-// ===== INPUT HANDLING MEJORADO =====
+// ===== INPUT HANDLING =====
 if (IS_DESKTOP) {
-  // Mouse movement con mejor interpolación
   canvas.addEventListener("mousemove", (e) => {
     const rect = canvas.getBoundingClientRect();
-    const newTarget = e.clientX - rect.left;
-    // Interpolación más suave para desktop
-    targetX = targetX * 0.75 + newTarget * 0.25;
+    targetX = e.clientX - rect.left;
   });
 }
 
-// Sistema de disparo optimizado para móvil y desktop
+// Sistema de disparo
 canvas.addEventListener("click", (e) => {
   if (!isGameRunning) return;
   e.preventDefault();
@@ -1568,7 +1245,13 @@ canvas.addEventListener("click", (e) => {
 
 canvas.addEventListener("touchstart", (e) => {
   if (!isGameRunning) return;
-  e.preventDefault(); // Prevenir zoom y otros comportamientos
+  e.preventDefault();
+  
+  if (e.touches.length > 0) {
+    const rect = canvas.getBoundingClientRect();
+    touchStartX = e.touches[0].clientX - rect.left;
+    targetX = touchStartX;
+  }
 }, { passive: false });
 
 canvas.addEventListener("touchend", (e) => {
@@ -1581,13 +1264,18 @@ canvas.addEventListener("touchend", (e) => {
   }
 }, { passive: false });
 
-// Prevenir comportamientos no deseados en móvil
 canvas.addEventListener("touchmove", (e) => {
-  e.preventDefault(); // Prevenir scroll de página
+  if (!isGameRunning) return;
+  e.preventDefault();
+  
+  if (e.touches.length > 0) {
+    const rect = canvas.getBoundingClientRect();
+    targetX = e.touches[0].clientX - rect.left;
+  }
 }, { passive: false });
 
 canvas.addEventListener("contextmenu", (e) => {
-  e.preventDefault(); // Prevenir menú contextual
+  e.preventDefault();
 });
 
 // ===== UI EVENT LISTENERS =====
@@ -1609,84 +1297,6 @@ document.getElementById('btn-back-menu')?.addEventListener('click', () => {
   if (homeScreen) homeScreen.classList.remove('hidden');
 });
 
-// ===== FUNCIONES DE UTILIDAD PARA DEBUGGING =====
-function addDebugInfo() {
-  if (typeof console !== 'undefined' && IS_MOBILE) {
-    // Debug info cada 5 segundos solo en móvil
-    setInterval(() => {
-      if (isGameRunning) {
-        console.log(`[DEBUG] Tilt: ${tiltInput.toFixed(3)}, Calibrated: ${isCalibrated}, Player X: ${PLAYER.x.toFixed(1)}, Game State: running`);
-      } else {
-        console.log(`[DEBUG] Game State: ${isAwaitingContinue ? 'awaiting-continue' : 'stopped'}`);
-      }
-    }, 5000);
-  }
-}
-
-// Función para recalibrar manualmente (mejorada)
-function forceRecalibration() {
-  if (IS_MOBILE) {
-    isCalibrated = false;
-    calibrationSamples = [];
-    calibrationOffset = 0;
-    tiltInput = 0;
-    console.log('[DEBUG] Recalibración forzada - sistema reset');
-  }
-}
-
-// ===== INICIALIZACIÓN Y EXPORTS =====
-// Inicializar debug info si estamos en desarrollo
-if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-  addDebugInfo();
-  // Exponer función de recalibración para debugging
-  window.forceRecalibration = forceRecalibration;
-  window.gameDebug = {
-    getCurrentTilt: () => tiltInput,
-    isCalibrated: () => isCalibrated,
-    getCalibrationOffset: () => calibrationOffset,
-    getGameState: () => ({
-      isGameRunning,
-      isAwaitingContinue,
-      isPaused,
-      score,
-      deathCount
-    }),
-    forceRecalibration: forceRecalibration
-  };
-}
-
-// Asegurar que el canvas tenga el foco correcto
-if (canvas) {
-  canvas.setAttribute('tabindex', '0');
-  canvas.style.outline = 'none';
-  
-  // Prevenir el scroll del body cuando se toca el canvas
-  canvas.style.touchAction = 'none';
-}
-
-// Event listener para cuando la orientación cambie
-window.addEventListener('orientationchange', () => {
-  setTimeout(() => {
-    resizeCanvasToContainer();
-    // Recalibrar después de cambio de orientación
-    if (IS_MOBILE && (isGameRunning || isAwaitingContinue)) {
-      setTimeout(() => {
-        forceRecalibration();
-      }, 500);
-    }
-  }, 100);
-});
-
-// Event listener para cuando la aplicación regrese del background
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && IS_MOBILE && (isGameRunning || isAwaitingContinue)) {
-    // Recalibrar cuando la app regrese del background
-    setTimeout(() => {
-      forceRecalibration();
-    }, 200);
-  }
-});
-
 // Prevenir el zoom en iOS
 document.addEventListener('gesturestart', function (e) {
   e.preventDefault();
@@ -1700,11 +1310,27 @@ document.addEventListener('gestureend', function (e) {
   e.preventDefault();
 });
 
+// Event listener para cambios de orientación
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    resizeCanvasToContainer();
+    if (IS_MOBILE && (isGameRunning || isAwaitingContinue)) {
+      setTimeout(() => {
+        gyroController.startCalibration();
+      }, 500);
+    }
+  }, 100);
+});
+
+// Canvas setup
+if (canvas) {
+  canvas.setAttribute('tabindex', '0');
+  canvas.style.outline = 'none';
+  canvas.style.touchAction = 'none';
+}
+
 // ===== EXPORTS =====
 window.startGame = startGame;
 
-console.log('[GAME] Sistema de juego cargado correctamente');
+console.log('[GAME] Sistema Doodle Jump cargado correctamente');
 console.log(`[DEVICE] Tipo: ${IS_MOBILE ? 'MÓVIL' : 'DESKTOP'}`);
-if (IS_MOBILE) {
-  console.log('[MOBILE] Sistema de inclinación mejorado activado');
-}
