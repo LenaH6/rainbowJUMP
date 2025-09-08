@@ -105,12 +105,13 @@ const BOOSTER_TYPES = {
   LONG: 'long'
 };
 
-// ===== MOBILE MOVEMENT SYSTEM - COMPLETAMENTE REDISEÑADO =====
+// ===== SISTEMA DE MOVIMIENTO MÓVIL PROFESIONAL =====
 let tiltInput = 0;
 let calibrationOffset = 0;
 let isCalibrated = false;
+let lastTiltReading = 0;
+let smoothTilt = 0;
 let calibrationSamples = [];
-let lastTiltTime = 0;
 
 // Detección de dispositivo mejorada
 const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
@@ -121,82 +122,175 @@ const IS_DESKTOP = !IS_MOBILE;
 // Variables para movimiento desktop
 let mouseX = 200, targetX = 200, smoothMouseX = 200;
 
-// Sistema de inclinación COMPLETAMENTE NUEVO - MÁS AGRESIVO Y RESPONSIVO
-if (window.DeviceOrientationEvent && IS_MOBILE) {
-  console.log('[MOBILE] Inicializando controles de inclinación MEJORADOS');
+// SISTEMA DE GIROSCOPIO PROFESIONAL Y REDISEÑADO
+class GyroscopeController {
+  constructor() {
+    this.isActive = false;
+    this.calibrationOffset = 0;
+    this.isCalibrated = false;
+    this.samples = [];
+    this.tiltValue = 0;
+    this.smoothTilt = 0;
+    this.hasPermission = false;
+    
+    // Configuración optimizada
+    this.DEAD_ZONE = 3.0;
+    this.MAX_TILT = 30.0;
+    this.SENSITIVITY = 1.5;
+    this.SMOOTHING = 0.15;
+    
+    this.init();
+  }
   
-  window.addEventListener("deviceorientation", (e) => {
-    const now = Date.now();
-    if (now - lastTiltTime < 10) return; // Aumentar frecuencia a 100fps
-    lastTiltTime = now;
-    
-    const rawGamma = e.gamma ?? 0;
-    
-    // CALIBRACIÓN MÁS RÁPIDA Y PRECISA
-    if (!isCalibrated) {
-      calibrationSamples.push(rawGamma);
-      if (calibrationSamples.length >= 3) { // Solo 3 muestras para calibración ultra-rápida
-        // Usar promedio simple
-        calibrationOffset = calibrationSamples.reduce((a, b) => a + b, 0) / calibrationSamples.length;
-        isCalibrated = true;
-        console.log(`[TILT] Calibración rápida completada: ${calibrationOffset.toFixed(2)}°`);
-      }
+  async init() {
+    if (!window.DeviceOrientationEvent || !IS_MOBILE) {
+      console.log('[GYRO] No disponible en este dispositivo');
       return;
     }
     
-    // PROCESAMIENTO DE INCLINACIÓN ULTRA AGRESIVO
-    let calibratedGamma = rawGamma - calibrationOffset;
+    console.log('[GYRO] Inicializando sistema profesional');
     
-    // Configuración ULTRA SENSIBLE
-    const CONFIG = {
-      deadzone: 0.8,        // Zona muerta MÍN para máxima sensibilidad
-      maxTilt: 15.0,        // Rango más pequeño = mayor sensibilidad
-      baseSensitivity: 1.0, // Sensibilidad base alta
-      acceleration: 2.5,    // Aceleración fuerte
-      minSmoothiness: 0.05  // Suavizado mínimo para máxima respuesta
-    };
-    
-    // Zona muerta mínima
-    if (Math.abs(calibratedGamma) < CONFIG.deadzone) {
-      calibratedGamma = 0;
+    // Solicitar permisos en iOS
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceOrientationEvent.requestPermission();
+        this.hasPermission = response === 'granted';
+        console.log(`[GYRO] Permisos iOS: ${this.hasPermission ? 'CONCEDIDOS' : 'DENEGADOS'}`);
+      } catch (error) {
+        console.warn('[GYRO] Error solicitando permisos iOS:', error);
+        this.hasPermission = false;
+      }
+    } else {
+      this.hasPermission = true; // Android y otros
     }
     
-    // Limitar rango (más pequeño = más sensible)
-    calibratedGamma = Math.max(-CONFIG.maxTilt, Math.min(CONFIG.maxTilt, calibratedGamma));
+    if (this.hasPermission) {
+      this.startListening();
+    }
+  }
+  
+  startListening() {
+    window.addEventListener("deviceorientation", (e) => {
+      this.handleOrientation(e);
+    }, { passive: true });
     
-    // Normalizar (-1 a 1)
-    let normalizedTilt = calibratedGamma / CONFIG.maxTilt;
+    this.isActive = true;
+    this.startCalibration();
+    console.log('[GYRO] Sistema activo');
+  }
+  
+  handleOrientation(event) {
+    if (!event.gamma || !this.isActive) return;
     
-    // CURVA DE ACELERACIÓN AGRESIVA
-    const absTilt = Math.abs(normalizedTilt);
-    const sign = normalizedTilt >= 0 ? 1 : -1;
+    const rawGamma = event.gamma;
+    this.lastTiltReading = rawGamma;
     
-    if (absTilt > 0.3) { // Acelerar desde movimientos pequeños
-      const acceleration = 1 + (absTilt - 0.3) * CONFIG.acceleration;
-      normalizedTilt = sign * (0.3 + (absTilt - 0.3) * acceleration);
+    // Fase de calibración
+    if (!this.isCalibrated) {
+      this.samples.push(rawGamma);
+      return;
     }
     
-    // Aplicar sensibilidad base ALTA
-    normalizedTilt *= CONFIG.baseSensitivity;
+    // Procesar inclinación calibrada
+    let calibratedTilt = rawGamma - this.calibrationOffset;
     
-    // Clamp final para evitar valores extremos
+    // Aplicar zona muerta para estabilidad
+    if (Math.abs(calibratedTilt) < this.DEAD_ZONE) {
+      calibratedTilt = 0;
+    } else {
+      // Remover zona muerta manteniendo dirección
+      const sign = calibratedTilt > 0 ? 1 : -1;
+      calibratedTilt = sign * (Math.abs(calibratedTilt) - this.DEAD_ZONE);
+    }
+    
+    // Normalizar a rango [-1, 1]
+    calibratedTilt = Math.max(-this.MAX_TILT, Math.min(this.MAX_TILT, calibratedTilt));
+    let normalizedTilt = (calibratedTilt / this.MAX_TILT) * this.SENSITIVITY;
     normalizedTilt = Math.max(-1, Math.min(1, normalizedTilt));
     
-    // SUAVIZADO MÍNIMO - priorizar respuesta inmediata
-    tiltInput = tiltInput * CONFIG.minSmoothiness + normalizedTilt * (1 - CONFIG.minSmoothiness);
+    // Suavizado adaptativo
+    this.smoothTilt = this.smoothTilt * (1 - this.SMOOTHING) + normalizedTilt * this.SMOOTHING;
+    this.tiltValue = this.smoothTilt;
     
-  }, { passive: true });
+    // Actualizar variable global
+    tiltInput = this.tiltValue;
+  }
   
-  // Auto-recalibración más agresiva
-  setInterval(() => {
-    if (isGameRunning && isCalibrated && Math.abs(tiltInput) < 0.05) {
-      // Micro-ajuste más agresivo
-      const adjustment = tiltInput * 0.02;
-      calibrationOffset += adjustment;
+  startCalibration() {
+    this.samples = [];
+    this.isCalibrated = false;
+    console.log('[GYRO] Iniciando calibración inteligente...');
+    
+    setTimeout(() => {
+      if (this.samples.length >= 15) {
+        // Usar mediana para robustez
+        this.samples.sort((a, b) => a - b);
+        const mid = Math.floor(this.samples.length / 2);
+        this.calibrationOffset = this.samples[mid];
+        this.isCalibrated = true;
+        console.log(`[GYRO] Calibración completada: ${this.calibrationOffset.toFixed(2)}°`);
+        
+        // Notificar al usuario
+        this.showCalibrationComplete();
+      } else {
+        console.warn('[GYRO] Muestras insuficientes, usando valor por defecto');
+        this.calibrationOffset = 0;
+        this.isCalibrated = true;
+      }
+    }, 1500);
+  }
+  
+  showCalibrationComplete() {
+    // Crear indicador visual temporal
+    const indicator = document.createElement('div');
+    indicator.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(46, 204, 113, 0.9);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 25px;
+      font-size: 14px;
+      font-weight: bold;
+      z-index: 10000;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    `;
+    indicator.textContent = '📱 Giroscopio calibrado';
+    document.body.appendChild(indicator);
+    
+    setTimeout(() => {
+      indicator.style.opacity = '0';
+      setTimeout(() => indicator.remove(), 300);
+    }, 1500);
+  }
+  
+  recalibrate() {
+    if (this.isActive) {
+      console.log('[GYRO] Recalibración manual iniciada');
+      this.startCalibration();
     }
-  }, 1000); // Cada segundo en lugar de cada 2
+  }
+  
+  getTiltInput() {
+    return this.isCalibrated ? this.tiltValue : 0;
+  }
+  
+  getStatus() {
+    return {
+      isActive: this.isActive,
+      isCalibrated: this.isCalibrated,
+      hasPermission: this.hasPermission,
+      currentTilt: this.tiltValue,
+      calibrationOffset: this.calibrationOffset
+    };
+  }
 }
 
+// Instanciar controlador de giroscopio
+const gyroController = new GyroscopeController();
 // ===== PARTICLE SYSTEM =====
 class Particle {
   constructor(x, y, vx, vy, color, life, size = 2) {
@@ -1135,27 +1229,22 @@ function update() {
       smoothMouseX = smoothMouseX * 0.8 + clampedTarget * 0.2;
       PLAYER.x = smoothMouseX - PLAYER.w / 2;
     } else {
-      // MÓVIL: Sistema ULTRA RESPONSIVO
-      const baseSpeed = w * 0.025; // Velocidad base MUY ALTA
-      
-      // Aplicar movimiento DIRECTO con multiplicadores agresivos
-      let moveSpeed = tiltInput * baseSpeed;
-      
-      // Aceleración EXTREMA para cualquier inclinación > 0.2
-      const absInput = Math.abs(tiltInput);
-      if (absInput > 0.2) {
-        const boostMultiplier = 1 + (absInput - 0.2) * 2.0; // Multiplicador x3 máximo
-        moveSpeed *= boostMultiplier;
-      }
-      
-      // Aplicar movimiento DIRECTO - sin suavizado
-      PLAYER.x += moveSpeed;
-      
-      // Debug para móvil
-      if (Date.now() % 1000 < 50) { // Log cada segundo aprox
-        console.log(`[MOBILE] Tilt: ${tiltInput.toFixed(3)}, Speed: ${moveSpeed.toFixed(2)}, PlayerX: ${PLAYER.x.toFixed(1)}`);
-      }
-    }
+  // MÓVIL: Sistema profesional con giroscopio
+  const tilt = gyroController.getTiltInput();
+  const baseSpeed = w * 0.025; // Velocidad base optimizada
+  let moveSpeed = tilt * baseSpeed;
+  
+  // Aceleración progresiva mejorada
+  const absInput = Math.abs(tilt);
+  if (absInput > 0.2) {
+    const accelerationFactor = 1 + (absInput - 0.2) * 2;
+    moveSpeed *= accelerationFactor;
+  }
+  
+  // Aplicar movimiento suavizado
+  PLAYER.vx = PLAYER.vx * 0.8 + moveSpeed * 0.2;
+  PLAYER.x += PLAYER.vx;
+}
 
     // ===== WRAP-AROUND COMPLETO =====
     if (PLAYER.x > w) {
