@@ -134,10 +134,10 @@ class GyroscopeController {
     this.hasPermission = false;
     
     // Configuración optimizada
-    this.DEAD_ZONE = 5;
-    this.MAX_TILT = 45.0;
-    this.SENSITIVITY = 1.0;
-    this.SMOOTHING = 0.1;
+    this.DEAD_ZONE = 1.0;
+    this.MAX_TILT = 15.0;
+    this.SENSITIVITY = 0.8;
+    this.SMOOTHING = 0.05;
     
     this.init();
   }
@@ -1242,7 +1242,7 @@ function update() {
   }
   
   // Aplicar movimiento suavizado
-  PLAYER.vx = PLAYER.vx * 0.8 + moveSpeed * 0.2;
+  PLAYER.vx = PLAYER.vx * 0.5 + moveSpeed * 0.1;
   PLAYER.x += PLAYER.vx;
 }
 
